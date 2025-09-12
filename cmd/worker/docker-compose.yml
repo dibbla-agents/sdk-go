@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  go-toolserver:
+    image: erikknave/codex.workflows.go-toolserver:latest
+    container_name: go-toolserver
+    ports:
+      - "3010:3010"
+    environment:
+      - SERVER_NAME=${SERVER_NAME}
+      # WORKFLOW_SERVER_NAME removed (gRPC-only)
+      - GRPC_SERVER_ADDRESS=${GRPC_SERVER_ADDRESS:-localhost:9090}
+      - CODEX_BACKEND_URL=${CODEX_BACKEND_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - CRASHIFY_POSTGRES_HOST=${CRASHIFY_POSTGRES_HOST}
+      - CRASHIFY_POSTGRES_PORT=${CRASHIFY_POSTGRES_PORT}
+      - CRASHIFY_POSTGRES_USER=${CRASHIFY_POSTGRES_USER}
+      - CRASHIFY_POSTGRES_PASSWORD=${CRASHIFY_POSTGRES_PASSWORD}
+      - CRASHIFY_POSTGRES_DB=${CRASHIFY_POSTGRES_DB}
+      - CACHE_TTL_SECONDS=${CACHE_TTL_SECONDS}
+    depends_on: []
+    restart: unless-stopped
+
+  # Redis service removed (gRPC-only)
