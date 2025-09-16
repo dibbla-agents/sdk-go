@@ -47,6 +47,8 @@ jobs:
                     value: "${{ github.event.head_commit.author.name }}"
       - name: Checkout source repo
         uses: actions/checkout@v4
+        with:
+          path: source-repo
 
       - name: Checkout target repo (out)
         uses: actions/checkout@v4
@@ -55,18 +57,28 @@ jobs:
           token: ${{ secrets.SYNC_TOKEN }}
           path: out-repo
 
-      - name: Copy files into workflows/workers folder
+      - name: Move source repo into target
         run: |
-          rsync -av --delete --exclude='.git' --exclude='.github' ./ out-repo/workflows-sdk/go
+          TARGET_DIR="out-repo/workflows-sdk/go"
+          rm -rf "$TARGET_DIR"
+          mkdir -p "$TARGET_DIR"
+          cp -r source-repo/* "$TARGET_DIR"
+          cp -r source-repo/.[^.]* "$TARGET_DIR" || true  # copy dotfiles except . and ..
 
-      - name: Commit and push changes
+      # 4. Commit only if there are changes
+      - name: Commit only if changes
         run: |
           cd out-repo
           git config user.name "${{ github.event.head_commit.author.name }}"
           git config user.email "${{ github.event.head_commit.author.email }}"
-          git add .
-          git commit -m "${{ github.event.head_commit.message }}" || echo "No changes to commit"
-          git push origin main
+
+          if ! git diff --quiet; then
+            git add .
+            git commit -m "Sync ${{ github.repository }} @ $GITHUB_SHA"
+            git push origin main
+          else
+            echo "No changes detected, skipping commit"
+          fi
 
       # ✅ Slack notification on success
       - name: Notify Slack on success
