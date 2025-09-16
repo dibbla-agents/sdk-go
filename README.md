@@ -57,7 +57,7 @@ package main
 
 import (
     "log"
-    
+
     sdk "github.com/FatsharkStudiosAB/codex/workflows/workers/go/sdk"
     "github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/types"
     "github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/state"
@@ -104,11 +104,11 @@ func main() {
 
 ### Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SERVER_NAME` | `codex-go-worker` | Unique identifier for this worker |
-| `GRPC_SERVER_ADDRESS` | `localhost:9090` | Address of the Codex Workflows server |
-| `SERVER_API_TOKEN` | _(empty)_ | Authentication token (optional) |
+| Variable              | Default           | Description                           |
+| --------------------- | ----------------- | ------------------------------------- |
+| `SERVER_NAME`         | `codex-go-worker` | Unique identifier for this worker     |
+| `GRPC_SERVER_ADDRESS` | `localhost:9090`  | Address of the Codex Workflows server |
+| `SERVER_API_TOKEN`    | _(empty)_         | Authentication token (optional)       |
 
 ### Docker Usage
 
@@ -130,7 +130,7 @@ docker run -e SERVER_NAME=my-worker \
 
 Following Go project layout conventions, the codebase is organized as follows:
 
-```
+```bash
 /
 ├── cmd/worker/              # Main application
 │   ├── main.go             # Entry point (minimal, imports SDK)
@@ -142,7 +142,7 @@ Following Go project layout conventions, the codebase is organized as follows:
 │   └── config.go           # Configuration
 └── internal/               # Private implementation
     ├── types/              # Core types (EventMessage, etc.)
-    ├── basefunction/       # Function implementation infrastructure  
+    ├── basefunction/       # Function implementation infrastructure
     ├── state/              # Global state management
     ├── communication/      # gRPC communication layer
     ├── handlers/           # Event handlers
@@ -155,6 +155,7 @@ Following Go project layout conventions, the codebase is organized as follows:
 ```
 
 **Key Principles:**
+
 - `cmd/worker/main.go` is minimal - only imports SDK and registers functions
 - `sdk/` contains public APIs that external developers use
 - `internal/` contains implementation details not exposed to users
@@ -171,7 +172,7 @@ cd codex/workflows/workers/go
 
 # Install dependencies for all modules
 cd internal && go mod tidy
-cd ../sdk && go mod tidy  
+cd ../sdk && go mod tidy
 cd ../cmd/worker && go mod tidy
 
 # Build and test
@@ -185,6 +186,7 @@ go test ./...
 The SDK provides two types of functions:
 
 #### Simple Functions
+
 For basic input → output transformations:
 
 ```go
@@ -197,6 +199,7 @@ fn := sdk.NewSimpleFunction[Input, Output](name, version, description)
 ```
 
 #### Advanced Functions
+
 For functions needing access to workflow context:
 
 ```go
@@ -233,6 +236,7 @@ workflows/workers/go/
 ### Common Issues
 
 **Import Resolution Errors**: Make sure you're using the correct module paths:
+
 - SDK: `github.com/FatsharkStudiosAB/codex/workflows/workers/go/sdk`
 - Internal packages: `github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/...` (only for internal development)
 
