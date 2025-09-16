@@ -7,6 +7,8 @@ on:
 
 env:
   SLACK_CHANNEL_ID: C09FCR96Q58
+  TARGET_REPO: dibbla-agents/codex
+  TARGET_DIR: workflows-sdk/go
 
 jobs:
   sync:
@@ -20,7 +22,7 @@ jobs:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           payload: |
             channel: ${{ env.SLACK_CHANNEL_ID }}
-            text: "🔄 Syncing `${{ github.repository }}` → `dibbla-agents/out` (branch: ${{ github.ref_name }})"
+            text: "🔄 Syncing `${{ github.repository }}` → `${{ env.TARGET_REPO }}` (branch: ${{ github.ref_name }})"
             attachments:
               - color: "dbab09"
                 fields:
@@ -32,7 +34,7 @@ jobs:
                     value: "${{ github.repository }}"
                   - title: "Target Repository"
                     short: true
-                    value: "dibbla-agents/out"
+                    value: "${{ env.TARGET_REPO }}"
                   - title: "Branch"
                     short: true
                     value: "${{ github.ref_name }}"
@@ -50,16 +52,16 @@ jobs:
         with:
           path: source-repo
 
-      - name: Checkout target repo (out)
+      - name: Checkout target repo
         uses: actions/checkout@v4
         with:
-          repository: dibbla-agents/out
+          repository: ${{ env.TARGET_REPO }}
           token: ${{ secrets.SYNC_TOKEN }}
-          path: out-repo
+          path: target-repo
 
       - name: Move source repo into target
         run: |
-          TARGET_DIR="out-repo/workflows-sdk/go"
+          TARGET_DIR="target-repo/${{ env.TARGET_DIR }}"
           rm -rf "$TARGET_DIR"
           mkdir -p "$TARGET_DIR"
           cp -r source-repo/* "$TARGET_DIR"
@@ -68,13 +70,14 @@ jobs:
       # 4. Commit only if there are changes
       - name: Commit only if changes
         run: |
-          cd out-repo
+          cd target-repo
+
           git config user.name "${{ github.event.head_commit.author.name }}"
           git config user.email "${{ github.event.head_commit.author.email }}"
 
           if ! git diff --quiet; then
             git add .
-            git commit -m "Sync ${{ github.repository }} @ $GITHUB_SHA"
+            git commit -m "${{ github.event.head_commit.message }}"
             git push origin main
           else
             echo "No changes detected, skipping commit"
