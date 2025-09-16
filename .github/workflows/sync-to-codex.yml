@@ -93,7 +93,7 @@ jobs:
           payload: |
             channel: ${{ env.SLACK_CHANNEL_ID }}
             ts: "${{ steps.sync_sequence.outputs.ts }}"
-            text: "✅ Successfully synced `${{ github.repository }}` → `dibbla-agents/out`"
+            text: "✅ Successfully synced `${{ github.repository }}` → `${{ env.TARGET_REPO }}`"
             attachments:
               - color: "28a745"
                 fields:
@@ -105,7 +105,7 @@ jobs:
                     value: "${{ github.repository }}"
                   - title: "Target Repository"
                     short: true
-                    value: "dibbla-agents/out"
+                    value: "${{ env.TARGET_REPO }}"
                   - title: "Branch"
                     short: true
                     value: "${{ github.ref_name }}"
@@ -129,7 +129,7 @@ jobs:
           payload: |
             channel: ${{ env.SLACK_CHANNEL_ID }}
             ts: "${{ steps.sync_sequence.outputs.ts }}"
-            text: "❌ Failed to sync `${{ github.repository }}` → `dibbla-agents/out`"
+            text: "❌ Failed to sync `${{ github.repository }}` → `${{ env.TARGET_REPO }}`"
             attachments:
               - color: "dc3545"
                 fields:
@@ -141,7 +141,7 @@ jobs:
                     value: "${{ github.repository }}"
                   - title: "Target Repository"
                     short: true
-                    value: "dibbla-agents/out"
+                    value: "${{ env.TARGET_REPO }}"
                   - title: "Branch"
                     short: true
                     value: "${{ github.ref_name }}"
