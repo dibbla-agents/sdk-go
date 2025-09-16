@@ -57,7 +57,7 @@ jobs:
 
       - name: Copy files into workflows/workers folder
         run: |
-          rsync -av --delete --exclude='.git' --exclude='.github' ./ out-repo/workflows/workers/
+          rsync -av --delete --exclude='.git' --exclude='.github' ./ out-repo/workflows-sdk/go
 
       - name: Commit and push changes
         run: |
