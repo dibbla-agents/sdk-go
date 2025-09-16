@@ -1,0 +1,141 @@
+name: Sync to Codex
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  SLACK_CHANNEL_ID: C09FCR96Q58
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Initiate the sync sequence
+        id: sync_sequence
+        uses: slackapi/slack-github-action@v2.1.1
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            channel: ${{ env.SLACK_CHANNEL_ID }}
+            text: "🔄 Syncing `${{ github.repository }}` → `dibbla-agents/out` (branch: ${{ github.ref_name }})"
+            attachments:
+              - color: "dbab09"
+                fields:
+                  - title: "Status"
+                    short: true
+                    value: "In Progress"
+                  - title: "Source Repository"
+                    short: true
+                    value: "${{ github.repository }}"
+                  - title: "Target Repository"
+                    short: true
+                    value: "dibbla-agents/out"
+                  - title: "Branch"
+                    short: true
+                    value: "${{ github.ref_name }}"
+                  - title: "Commit"
+                    short: true
+                    value: "<https://github.com/${{ github.repository }}/commit/${{ github.sha }}|${{ github.sha }}>"
+                  - title: "Commit Message"
+                    short: false
+                    value: "${{ github.event.head_commit.message }}"
+                  - title: "Author"
+                    short: true
+                    value: "${{ github.event.head_commit.author.name }}"
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+
+      - name: Checkout target repo (out)
+        uses: actions/checkout@v4
+        with:
+          repository: dibbla-agents/out
+          token: ${{ secrets.SYNC_TOKEN }}
+          path: out-repo
+
+      - name: Copy files into workflows/workers folder
+        run: |
+          rsync -av --delete --exclude='.git' --exclude='.github' ./ out-repo/workflows/workers/
+
+      - name: Commit and push changes
+        run: |
+          cd out-repo
+          git config user.name "${{ github.event.head_commit.author.name }}"
+          git config user.email "${{ github.event.head_commit.author.email }}"
+          git add .
+          git commit -m "${{ github.event.head_commit.message }}" || echo "No changes to commit"
+          git push origin main
+
+      # ✅ Slack notification on success
+      - name: Notify Slack on success
+        if: success()
+        uses: slackapi/slack-github-action@v2.1.1
+        with:
+          method: chat.update
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            channel: ${{ env.SLACK_CHANNEL_ID }}
+            ts: "${{ steps.sync_sequence.outputs.ts }}"
+            text: "✅ Successfully synced `${{ github.repository }}` → `dibbla-agents/out`"
+            attachments:
+              - color: "28a745"
+                fields:
+                  - title: "Status"
+                    short: true
+                    value: "Completed"
+                  - title: "Source Repository"
+                    short: true
+                    value: "${{ github.repository }}"
+                  - title: "Target Repository"
+                    short: true
+                    value: "dibbla-agents/out"
+                  - title: "Branch"
+                    short: true
+                    value: "${{ github.ref_name }}"
+                  - title: "Commit"
+                    short: true
+                    value: "<https://github.com/${{ github.repository }}/commit/${{ github.sha }}|${{ github.sha }}>"
+                  - title: "Commit Message"
+                    short: false
+                    value: "${{ github.event.head_commit.message }}"
+                  - title: "Author"
+                    short: true
+                    value: "${{ github.event.head_commit.author.name }}"
+
+      # ❌ Slack notification on failure
+      - name: Notify Slack on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v2.1.1
+        with:
+          method: chat.update
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            channel: ${{ env.SLACK_CHANNEL_ID }}
+            ts: "${{ steps.sync_sequence.outputs.ts }}"
+            text: "❌ Failed to sync `${{ github.repository }}` → `dibbla-agents/out`"
+            attachments:
+              - color: "dc3545"
+                fields:
+                  - title: "Status"
+                    short: true
+                    value: "Failed"
+                  - title: "Source Repository"
+                    short: true
+                    value: "${{ github.repository }}"
+                  - title: "Target Repository"
+                    short: true
+                    value: "dibbla-agents/out"
+                  - title: "Branch"
+                    short: true
+                    value: "${{ github.ref_name }}"
+                  - title: "Commit"
+                    short: true
+                    value: "<https://github.com/${{ github.repository }}/commit/${{ github.sha }}|${{ github.sha }}>"
+                  - title: "Commit Message"
+                    short: false
+                    value: "${{ github.event.head_commit.message }}"
+                  - title: "Author"
+                    short: true
+                    value: "${{ github.event.head_commit.author.name }}"
