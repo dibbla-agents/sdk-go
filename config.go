@@ -1,4 +1,4 @@
-package sdk
+package dibbla
 
 import (
 	"os"
@@ -13,6 +13,7 @@ type Config struct {
 	CommunicationMode string // will be forced to "grpc"
 	GrpcServerAddress string // Address of the gRPC workflow server
 	ServerApiToken    string // API token for authentication
+	GrpcUseTLS        *bool  // nil = auto-detect based on address
 
 	// Handler/dispatcher configuration
 	HandlersConcurrency  int
@@ -31,8 +32,16 @@ func defaultConfig() *Config {
 	serverName := getEnvWithDefault("SERVER_NAME", "codex-go-worker")
 	codexEnvPath := getEnvWithDefault("CODEX_ENV_PATH", "")
 	communicationMode := getEnvWithDefault("COMMUNICATION_MODE", "grpc")
-	grpcServerAddress := getEnvWithDefault("GRPC_SERVER_ADDRESS", "localhost:50051")
+	grpcServerAddress := getEnvWithDefault("GRPC_SERVER_ADDRESS", "grpc.dibbla.com:443")
 	serverApiToken := getEnvWithDefault("SERVER_API_TOKEN", "")
+	
+	// TLS configuration with auto-detection
+	var defaultTLS *bool = nil
+	if tlsEnv := os.Getenv("GRPC_USE_TLS"); tlsEnv != "" {
+		val := (tlsEnv == "true" || tlsEnv == "1")
+		defaultTLS = &val
+	}
+	
 	// Defaults mirror current hard-coded behavior
 	handlersConcurrency := 8
 	incomingBuffer := 100
@@ -45,6 +54,7 @@ func defaultConfig() *Config {
 		CommunicationMode:          communicationMode,
 		GrpcServerAddress:          grpcServerAddress,
 		ServerApiToken:             serverApiToken,
+		GrpcUseTLS:                 defaultTLS,
 		HandlersConcurrency:        handlersConcurrency,
 		IncomingEventsBuffer:       incomingBuffer,
 		GrpcReconnectIntervalSec:   reconnectInterval,
@@ -80,6 +90,11 @@ func WithServerApiToken(token string) Option {
 	return func(c *Config) { c.ServerApiToken = token }
 }
 
+// WithGrpcTLS enables or disables TLS for gRPC connections
+func WithGrpcTLS(useTLS bool) Option {
+	return func(c *Config) { c.GrpcUseTLS = &useTLS }
+}
+
 // WithGrpcMode configures the SDK to use gRPC communication
 func WithGrpcMode(serverAddress string) Option {
 	return func(c *Config) {
@@ -113,3 +128,4 @@ func getEnvWithDefault(key, defaultValue string) string {
 	}
 	return defaultValue
 }
+

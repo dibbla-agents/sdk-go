@@ -1,7 +1,7 @@
 package models
 
 import (
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/basefunction"
+	"github.com/dibbla-agents/sdk-go/internal/basefunction"
 
 	"github.com/tmc/langchaingo/llms"
 )

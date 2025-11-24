@@ -1,15 +1,15 @@
-package sdk
+package dibbla
 
 import (
 	"fmt"
 	"log"
 
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/basefunction"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/dispatcher"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/handlers"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/rpc"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/state"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/types"
+	"github.com/dibbla-agents/sdk-go/internal/basefunction"
+	"github.com/dibbla-agents/sdk-go/internal/dispatcher"
+	"github.com/dibbla-agents/sdk-go/internal/handlers"
+	"github.com/dibbla-agents/sdk-go/internal/rpc"
+	"github.com/dibbla-agents/sdk-go/internal/state"
+	"github.com/dibbla-agents/sdk-go/internal/types"
 
 	"github.com/joho/godotenv"
 )
@@ -73,6 +73,7 @@ func (s *Server) initializeGlobalState() error {
 		IncomingBuffer:         s.config.IncomingEventsBuffer,
 		ReconnectIntervalSec:   s.config.GrpcReconnectIntervalSec,
 		HealthcheckIntervalSec: s.config.GrpcHealthcheckIntervalSec,
+		UseTLS:                 s.config.GrpcUseTLS,
 	}
 
 	globalState, err := state.NewGlobalStateWithMode(commConfig)

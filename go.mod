@@ -1,8 +1,9 @@
-module github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal
+module github.com/dibbla-agents/sdk-go
 
 go 1.23.1
 
 require (
+	github.com/joho/godotenv v1.5.1
 	github.com/spaolacci/murmur3 v1.1.0
 	github.com/tmc/langchaingo v0.1.13
 	google.golang.org/grpc v1.64.0
@@ -18,3 +19,4 @@ require (
 	golang.org/x/text v0.20.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240604185151-ef581f913117 // indirect
 )
+

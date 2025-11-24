@@ -2,8 +2,8 @@ package correlation
 
 import (
 	"context"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/maps"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/types"
+	"github.com/dibbla-agents/sdk-go/internal/maps"
+	"github.com/dibbla-agents/sdk-go/internal/types"
 )
 
 // Router manages correlated request/response channels by correlation ID.

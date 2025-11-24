@@ -2,17 +2,20 @@ package communication
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/types"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/workflowsgrpc"
+	"github.com/dibbla-agents/sdk-go/internal/types"
+	"github.com/dibbla-agents/sdk-go/internal/workflowsgrpc"
 	"io"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -26,6 +29,7 @@ type GrpcCommunicator struct {
 	stream        grpc.BidiStreamingClient[workflowsgrpc.GrpcEventMessage, workflowsgrpc.GrpcEventMessage]
 	serverName    string
 	apiToken      string
+	useTLS        bool // Determined at creation time
 
 	// Channel for incoming events
 	incomingEvents chan *types.EventMessage
@@ -61,8 +65,26 @@ func NewGrpcCommunicator(serverAddress, serverName, apiToken string) *GrpcCommun
 	}
 }
 
+// ShouldUseTLS determines if TLS should be used based on the server address
+func ShouldUseTLS(address string) bool {
+	// localhost, 127.0.0.1, [::1] = no TLS (development)
+	if strings.HasPrefix(address, "localhost:") ||
+		strings.HasPrefix(address, "127.0.0.1:") ||
+		strings.HasPrefix(address, "[::1]:") {
+		return false
+	}
+	// Everything else = TLS (production)
+	return true
+}
+
 // NewGrpcCommunicatorWithOptions allows configuring buffer size and intervals.
 func NewGrpcCommunicatorWithOptions(serverAddress, serverName, apiToken string, incomingBuffer, reconnectIntervalSec, healthcheckIntervalSec int) *GrpcCommunicator {
+	useTLS := ShouldUseTLS(serverAddress)
+	return NewGrpcCommunicatorWithTLS(serverAddress, serverName, apiToken, incomingBuffer, reconnectIntervalSec, healthcheckIntervalSec, useTLS)
+}
+
+// NewGrpcCommunicatorWithTLS allows explicit TLS control
+func NewGrpcCommunicatorWithTLS(serverAddress, serverName, apiToken string, incomingBuffer, reconnectIntervalSec, healthcheckIntervalSec int, useTLS bool) *GrpcCommunicator {
 	if incomingBuffer <= 0 {
 		incomingBuffer = 100
 	}
@@ -77,6 +99,7 @@ func NewGrpcCommunicatorWithOptions(serverAddress, serverName, apiToken string, 
 		serverAddress:          serverAddress,
 		serverName:             serverName,
 		apiToken:               apiToken,
+		useTLS:                 useTLS,
 		incomingEvents:         make(chan *types.EventMessage, incomingBuffer),
 		ctx:                    ctx,
 		cancel:                 cancel,
@@ -136,11 +159,21 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 		log.Printf("⚠️  Warning: No API token provided. Set SERVER_API_TOKEN environment variable for authentication.")
 	}
 
-	// Create gRPC connection without blocking
-	conn, err := grpc.NewClient(
-		gc.serverAddress,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	// Create gRPC connection with appropriate credentials
+	var opts []grpc.DialOption
+
+	if gc.useTLS {
+		// Production: Use TLS with system certificates
+		creds := credentials.NewTLS(&tls.Config{})
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+		log.Printf("Connecting with TLS to %s", gc.serverAddress)
+	} else {
+		// Development: No TLS
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		log.Printf("Connecting without TLS to %s", gc.serverAddress)
+	}
+
+	conn, err := grpc.NewClient(gc.serverAddress, opts...)
 	if err != nil {
 		log.Printf("Failed to create gRPC client: %v", err)
 		return false

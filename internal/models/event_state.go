@@ -1,6 +1,6 @@
 package models
 
-import "github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/types"
+import "github.com/dibbla-agents/sdk-go/internal/types"
 
 type EventState struct {
 	Function      string `json:"function"`

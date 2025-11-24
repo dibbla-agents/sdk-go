@@ -1,11 +1,11 @@
-package sdk
+package dibbla
 
 import (
 	"time"
 
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/basefunction"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/state"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/types"
+	"github.com/dibbla-agents/sdk-go/internal/basefunction"
+	"github.com/dibbla-agents/sdk-go/internal/state"
+	"github.com/dibbla-agents/sdk-go/internal/types"
 )
 
 // FunctionBuilder defines the interface for building functions
@@ -119,3 +119,5 @@ func (f *SimpleFunction[In, Out]) Build(gs *state.GlobalState) basefunction.Func
 		f.tags,
 	)
 }
+
+

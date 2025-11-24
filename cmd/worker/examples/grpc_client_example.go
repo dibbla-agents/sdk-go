@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/workflowsgrpc"
+	"github.com/dibbla-agents/sdk-go/internal/workflowsgrpc"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"

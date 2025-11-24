@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/types"
+	"github.com/dibbla-agents/sdk-go/internal/types"
 	"log"
 	"sync"
 )

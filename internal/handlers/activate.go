@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/state"
+	"github.com/dibbla-agents/sdk-go/internal/state"
 )
 
 func Activate(gs *state.GlobalState) {

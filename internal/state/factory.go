@@ -2,11 +2,11 @@ package state
 
 import (
 	"fmt"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/basefunction"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/communication"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/grpccache"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/grpcstore"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/maps"
+	"github.com/dibbla-agents/sdk-go/internal/basefunction"
+	"github.com/dibbla-agents/sdk-go/internal/communication"
+	"github.com/dibbla-agents/sdk-go/internal/grpccache"
+	"github.com/dibbla-agents/sdk-go/internal/grpcstore"
+	"github.com/dibbla-agents/sdk-go/internal/maps"
 	"os"
 )
 
@@ -18,6 +18,7 @@ type CommunicationConfig struct {
 	IncomingBuffer         int
 	ReconnectIntervalSec   int
 	HealthcheckIntervalSec int
+	UseTLS                 *bool // nil = auto-detect
 }
 
 // NewGlobalStateWithMode creates a GlobalState with the specified communication mode
@@ -68,13 +69,26 @@ func setupGrpcMode(gs *GlobalState, config CommunicationConfig) (communication.W
 	if health <= 0 {
 		health = 30
 	}
-	grpcCommunicator := communication.NewGrpcCommunicatorWithOptions(
+
+	// Determine TLS setting
+	// Default to auto-detection based on address (TLS for production, no TLS for localhost)
+	useTLS := true
+	if config.UseTLS != nil {
+		// Explicit override takes precedence
+		useTLS = *config.UseTLS
+	} else {
+		// Auto-detect: TLS for production addresses, no TLS for localhost
+		useTLS = communication.ShouldUseTLS(config.GrpcServerAddress)
+	}
+
+	grpcCommunicator := communication.NewGrpcCommunicatorWithTLS(
 		config.GrpcServerAddress,
 		config.ServerName,
 		config.ServerApiToken,
 		incoming,
 		reconn,
 		health,
+		useTLS,
 	)
 
 	// Connect to gRPC server
@@ -89,7 +103,7 @@ func setupGrpcMode(gs *GlobalState, config CommunicationConfig) (communication.W
 func NewGlobalStateFromEnvironment() (*GlobalState, error) {
 	config := CommunicationConfig{
 		ServerName:        getEnvWithDefault("SERVER_NAME", "go-toolserver"),
-		GrpcServerAddress: getEnvWithDefault("GRPC_SERVER_ADDRESS", "localhost:9090"),
+		GrpcServerAddress: getEnvWithDefault("GRPC_SERVER_ADDRESS", "grpc.dibbla.com:443"),
 	}
 	return NewGlobalStateWithMode(config)
 }

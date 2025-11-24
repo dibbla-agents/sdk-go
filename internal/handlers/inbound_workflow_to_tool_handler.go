@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"fmt"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/state"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/types"
+	"github.com/dibbla-agents/sdk-go/internal/state"
+	"github.com/dibbla-agents/sdk-go/internal/types"
 	"log"
 )
 

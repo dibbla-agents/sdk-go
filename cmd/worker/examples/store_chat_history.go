@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	sdk "github.com/FatsharkStudiosAB/codex/workflows/workers/go/sdk"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/state"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/types"
+	sdk "github.com/dibbla-agents/sdk-go"
+	"github.com/dibbla-agents/sdk-go/internal/state"
+	"github.com/dibbla-agents/sdk-go/internal/types"
 )
 
 type StoreChatHistoryInputs struct {

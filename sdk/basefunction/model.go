@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/hash"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/types"
+	"github.com/dibbla-agents/sdk-go/internal/hash"
+	"github.com/dibbla-agents/sdk-go/internal/types"
 )
 
 type FunctionInterface interface {

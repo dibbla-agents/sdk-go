@@ -3,10 +3,10 @@ package grpccache
 import (
 	"context"
 	"fmt"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/communication"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/correlation"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/types"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/utils"
+	"github.com/dibbla-agents/sdk-go/internal/communication"
+	"github.com/dibbla-agents/sdk-go/internal/correlation"
+	"github.com/dibbla-agents/sdk-go/internal/types"
+	"github.com/dibbla-agents/sdk-go/internal/utils"
 	"strconv"
 	"time"
 )

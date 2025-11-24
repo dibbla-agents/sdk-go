@@ -1,6 +1,6 @@
 package communication
 
-import "github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/types"
+import "github.com/dibbla-agents/sdk-go/internal/types"
 
 // WorkflowCommunicator defines the interface for communicating with the workflow server
 type WorkflowCommunicator interface {

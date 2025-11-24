@@ -1,13 +1,13 @@
 package state
 
 import (
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/basefunction"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/communication"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/dispatcher"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/grpccache"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/grpcstore"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/maps"
-	"github.com/FatsharkStudiosAB/codex/workflows/workers/go/internal/rpc"
+	"github.com/dibbla-agents/sdk-go/internal/basefunction"
+	"github.com/dibbla-agents/sdk-go/internal/communication"
+	"github.com/dibbla-agents/sdk-go/internal/dispatcher"
+	"github.com/dibbla-agents/sdk-go/internal/grpccache"
+	"github.com/dibbla-agents/sdk-go/internal/grpcstore"
+	"github.com/dibbla-agents/sdk-go/internal/maps"
+	"github.com/dibbla-agents/sdk-go/internal/rpc"
 )
 
 type GlobalState struct {
