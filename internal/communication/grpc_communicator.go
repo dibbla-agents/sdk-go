@@ -46,6 +46,7 @@ type GrpcCommunicator struct {
 	// Configurable intervals (seconds). If 0, defaults are used by caller.
 	reconnectIntervalSec   int
 	healthcheckIntervalSec int
+	pingIntervalSec        int // 0 = disabled
 }
 
 // NewGrpcCommunicator creates a new gRPC-based communicator
@@ -78,13 +79,13 @@ func ShouldUseTLS(address string) bool {
 }
 
 // NewGrpcCommunicatorWithOptions allows configuring buffer size and intervals.
-func NewGrpcCommunicatorWithOptions(serverAddress, serverName, apiToken string, incomingBuffer, reconnectIntervalSec, healthcheckIntervalSec int) *GrpcCommunicator {
+func NewGrpcCommunicatorWithOptions(serverAddress, serverName, apiToken string, incomingBuffer, reconnectIntervalSec, healthcheckIntervalSec, pingIntervalSec int) *GrpcCommunicator {
 	useTLS := ShouldUseTLS(serverAddress)
-	return NewGrpcCommunicatorWithTLS(serverAddress, serverName, apiToken, incomingBuffer, reconnectIntervalSec, healthcheckIntervalSec, useTLS)
+	return NewGrpcCommunicatorWithTLS(serverAddress, serverName, apiToken, incomingBuffer, reconnectIntervalSec, healthcheckIntervalSec, pingIntervalSec, useTLS)
 }
 
 // NewGrpcCommunicatorWithTLS allows explicit TLS control
-func NewGrpcCommunicatorWithTLS(serverAddress, serverName, apiToken string, incomingBuffer, reconnectIntervalSec, healthcheckIntervalSec int, useTLS bool) *GrpcCommunicator {
+func NewGrpcCommunicatorWithTLS(serverAddress, serverName, apiToken string, incomingBuffer, reconnectIntervalSec, healthcheckIntervalSec, pingIntervalSec int, useTLS bool) *GrpcCommunicator {
 	if incomingBuffer <= 0 {
 		incomingBuffer = 100
 	}
@@ -93,6 +94,9 @@ func NewGrpcCommunicatorWithTLS(serverAddress, serverName, apiToken string, inco
 	}
 	if healthcheckIntervalSec <= 0 {
 		healthcheckIntervalSec = 30
+	}
+	if pingIntervalSec < 0 {
+		pingIntervalSec = 0
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &GrpcCommunicator{
@@ -106,6 +110,7 @@ func NewGrpcCommunicatorWithTLS(serverAddress, serverName, apiToken string, inco
 		reconnectCh:            make(chan struct{}, 1),
 		reconnectIntervalSec:   reconnectIntervalSec,
 		healthcheckIntervalSec: healthcheckIntervalSec,
+		pingIntervalSec:        pingIntervalSec,
 	}
 }
 
@@ -254,6 +259,11 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 
 	// Start message handler
 	go gc.receiveMessages()
+
+	// Start ping loop if enabled
+	if gc.pingIntervalSec > 0 {
+		go gc.pingLoop()
+	}
 
 	log.Printf("✅ gRPC client successfully connected to workflow server at %s", gc.serverAddress)
 	return true
@@ -439,6 +449,49 @@ func (gc *GrpcCommunicator) IsConnected() bool {
 	gc.mu.RLock()
 	defer gc.mu.RUnlock()
 	return gc.connected
+}
+
+// pingLoop sends ping messages at the configured interval
+func (gc *GrpcCommunicator) pingLoop() {
+	if gc.pingIntervalSec <= 0 {
+		return // Ping disabled
+	}
+
+	ticker := time.NewTicker(time.Duration(gc.pingIntervalSec) * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-gc.ctx.Done():
+			return
+		case <-ticker.C:
+			gc.sendPing()
+		}
+	}
+}
+
+// sendPing sends a ping message to the workflow server
+func (gc *GrpcCommunicator) sendPing() {
+	gc.mu.RLock()
+	connected := gc.connected
+	gc.mu.RUnlock()
+
+	if !connected {
+		return
+	}
+
+	pingEvent := &types.EventMessage{
+		Server:        gc.serverName,
+		Event:         types.EventPing,
+		Text:          "ping",
+		CorrelationID: "",
+	}
+
+	if err := gc.SendEvent(pingEvent); err != nil {
+		log.Printf("Failed to send ping: %v", err)
+	} else {
+		log.Printf("Sent ping to workflow server")
+	}
 }
 
 // conversion helpers removed in favor of workflowsgrpc converters

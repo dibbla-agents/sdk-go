@@ -18,6 +18,7 @@ type CommunicationConfig struct {
 	IncomingBuffer         int
 	ReconnectIntervalSec   int
 	HealthcheckIntervalSec int
+	PingIntervalSec        int   // Interval for sending ping messages (0 = disabled)
 	UseTLS                 *bool // nil = auto-detect
 }
 
@@ -69,6 +70,10 @@ func setupGrpcMode(gs *GlobalState, config CommunicationConfig) (communication.W
 	if health <= 0 {
 		health = 30
 	}
+	ping := config.PingIntervalSec
+	if ping < 0 {
+		ping = 0 // 0 means disabled
+	}
 
 	// Determine TLS setting
 	// Default to auto-detection based on address (TLS for production, no TLS for localhost)
@@ -88,6 +93,7 @@ func setupGrpcMode(gs *GlobalState, config CommunicationConfig) (communication.W
 		incoming,
 		reconn,
 		health,
+		ping,
 		useTLS,
 	)
 

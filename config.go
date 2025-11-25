@@ -22,6 +22,7 @@ type Config struct {
 	// gRPC lifecycle configuration
 	GrpcReconnectIntervalSec   int
 	GrpcHealthcheckIntervalSec int
+	PingIntervalSec            int // Interval for sending ping messages (0 = disabled)
 }
 
 // Option is a functional option for configuring the SDK
@@ -47,6 +48,7 @@ func defaultConfig() *Config {
 	incomingBuffer := 100
 	reconnectInterval := 5
 	healthcheckInterval := 30
+	pingInterval := 30
 
 	return &Config{
 		ServerName:                 serverName,
@@ -59,6 +61,7 @@ func defaultConfig() *Config {
 		IncomingEventsBuffer:       incomingBuffer,
 		GrpcReconnectIntervalSec:   reconnectInterval,
 		GrpcHealthcheckIntervalSec: healthcheckInterval,
+		PingIntervalSec:            pingInterval,
 	}
 }
 
@@ -110,6 +113,12 @@ func WithGrpcMode(serverAddress string) Option {
 // WithCodexEnvPath sets the path to the codex environment file
 func WithCodexEnvPath(path string) Option {
 	return func(c *Config) { c.CodexEnvPath = path }
+}
+
+// WithPingInterval sets the interval for sending ping messages (in seconds)
+// Set to 0 to disable ping messages
+func WithPingInterval(seconds int) Option {
+	return func(c *Config) { c.PingIntervalSec = seconds }
 }
 
 // applyToEnvironment applies the configuration to environment variables

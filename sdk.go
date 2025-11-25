@@ -73,6 +73,7 @@ func (s *Server) initializeGlobalState() error {
 		IncomingBuffer:         s.config.IncomingEventsBuffer,
 		ReconnectIntervalSec:   s.config.GrpcReconnectIntervalSec,
 		HealthcheckIntervalSec: s.config.GrpcHealthcheckIntervalSec,
+		PingIntervalSec:        s.config.PingIntervalSec,
 		UseTLS:                 s.config.GrpcUseTLS,
 	}
 

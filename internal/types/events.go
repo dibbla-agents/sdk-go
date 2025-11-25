@@ -8,6 +8,27 @@ const (
 	EventStatusMessage      = "status_message"
 	EventClientRegistration = "client_registration"
 
+	// Ping/Pong - Keep-alive mechanism between SDK client and workflow server
+	//
+	// PING (sent by SDK client every 30 seconds by default):
+	//   - event: "ping"
+	//   - server: "<client_server_name>"  (e.g., "codex-go-worker")
+	//   - text: "ping"
+	//   - correlation_id: "" (empty)
+	//   - All other fields empty (function, version, node, workflow, run, meta, payload)
+	//
+	// PONG (expected response from workflow server):
+	//   - event: "pong"
+	//   - server: "<workflow_server_name>"
+	//   - text: "pong"
+	//   - correlation_id: "" (empty, or echo the ping's if provided)
+	//
+	// The SDK client does not currently require or process pong responses,
+	// but the workflow server should send them for protocol completeness
+	// and potential future use (e.g., latency measurement, connection validation).
+	EventPing = "ping"
+	EventPong = "pong"
+
 	// Function invocation
 	EventFunctionRequest  = "function_request"
 	EventFunctionResponse = "function_response"
