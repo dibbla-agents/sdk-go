@@ -1,4 +1,4 @@
-package dibbla
+package sdk
 
 import (
 	"os"

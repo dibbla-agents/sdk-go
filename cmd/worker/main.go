@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	dibbla "github.com/dibbla-agents/sdk-go"
+	"github.com/dibbla-agents/sdk-go"
 	"github.com/dibbla-agents/sdk-go/cmd/worker/examples"
 
 	"github.com/joho/godotenv"
@@ -16,7 +16,7 @@ func main() {
 	}
 
 	// Create server with custom configuration
-	server, err := dibbla.New()
+	server, err := sdk.New()
 	if err != nil {
 		log.Fatal("Failed to create server:", err)
 	}
