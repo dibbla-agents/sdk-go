@@ -6,7 +6,7 @@ A Go SDK for building workflow functions with gRPC communication and automatic T
 
 This project follows Go project layout conventions with clear separation of concerns:
 
-- **Root Package** (`dibbla`): Public Go library for building workflow functions - contains the high-level API for users
+- **Root Package** (`sdk`): Public Go library for building workflow functions - contains the high-level API for users
 - **Internal** (`/internal`): Private implementation details - core types, communication, state management, and function infrastructure
 - **Worker Example** (`/cmd/worker`): Runnable server executable demonstrating SDK usage
 
@@ -49,16 +49,16 @@ type GreetingOutput struct {
 func main() {
     // Create server with minimal configuration
     // (defaults to grpc.dibbla.com:443 with TLS enabled)
-    server, err := dibbla.New(
-        dibbla.WithServerName("my-custom-worker"),
-        dibbla.WithServerApiToken("your-api-token"),
+    server, err := sdk.New(
+        sdk.WithServerName("my-custom-worker"),
+        sdk.WithServerApiToken("your-api-token"),
     )
     if err != nil {
         log.Fatal("Failed to create server:", err)
     }
 
     // Register a simple function
-    greetingFn := dibbla.NewSimpleFunction[GreetingInput, GreetingOutput](
+    greetingFn := sdk.NewSimpleFunction[GreetingInput, GreetingOutput](
         "greeting", "1.0.0", "Generate a greeting message",
     ).WithHandler(func(input GreetingInput) (GreetingOutput, error) {
         return GreetingOutput{
@@ -100,22 +100,22 @@ You can override the auto-detection:
 
 ```go
 // Minimal configuration - uses grpc.dibbla.com:443 with TLS (recommended)
-server, _ := dibbla.New(
-    dibbla.WithServerName("my-worker"),
-    dibbla.WithServerApiToken("your-token"),
+server, _ := sdk.New(
+    sdk.WithServerName("my-worker"),
+    sdk.WithServerApiToken("your-token"),
 )
 
 // Local development - uses localhost without TLS
-server, _ := dibbla.New(
-    dibbla.WithServerName("my-worker"),
-    dibbla.WithGrpcServerAddress("localhost:50051"),
+server, _ := sdk.New(
+    sdk.WithServerName("my-worker"),
+    sdk.WithGrpcServerAddress("localhost:50051"),
 )
 
 // Force TLS on for localhost (advanced)
-server, _ := dibbla.New(
-    dibbla.WithServerName("my-worker"),
-    dibbla.WithGrpcServerAddress("localhost:9090"),
-    dibbla.WithGrpcTLS(true),
+server, _ := sdk.New(
+    sdk.WithServerName("my-worker"),
+    sdk.WithGrpcServerAddress("localhost:9090"),
+    sdk.WithGrpcTLS(true),
 )
 ```
 
@@ -156,7 +156,7 @@ docker run -e SERVER_NAME=my-worker \
 
 ```
 sdk-go/
-├── sdk.go, config.go, function.go  # Public API (package dibbla)
+├── sdk.go, config.go, function.go  # Public API (package sdk)
 ├── go.mod                          # Single module for entire project
 ├── internal/                       # Private implementation
 │   ├── communication/              # gRPC communication with TLS
@@ -177,7 +177,7 @@ The SDK provides two types of functions:
 For basic input → output transformations:
 
 ```go
-fn := dibbla.NewSimpleFunction[Input, Output](name, version, description)
+fn := sdk.NewSimpleFunction[Input, Output](name, version, description)
     .WithHandler(func(input Input) (Output, error) {
         // Your logic here
         return output, nil
@@ -196,7 +196,7 @@ import (
     "github.com/dibbla-agents/sdk-go/internal/state"
 )
 
-fn := dibbla.NewFunction[Input, Output](name, version, description)
+fn := sdk.NewFunction[Input, Output](name, version, description)
     .WithHandler(func(input Input, event *types.EventMessage, gs *state.GlobalState) (Output, error) {
         // Access workflow info: event.Workflow, event.Node, etc.
         // Use RPC client: gs.RpcClient
@@ -223,11 +223,13 @@ import "github.com/dibbla-agents/sdk-go"
 ### API Changes
 
 ```go
-// Old
+// Old (from FatsharkStudiosAB/codex)
+import sdk "github.com/FatsharkStudiosAB/codex/workflows/workers/go/sdk"
 server := sdk.New()
 
-// New - branded package name
-server := dibbla.New()
+// New (dibbla-agents/sdk-go)
+import "github.com/dibbla-agents/sdk-go"
+server := sdk.New()  // package name is still "sdk"
 ```
 
 ### Steps to Migrate
@@ -241,7 +243,7 @@ server := dibbla.New()
 
 2. Update your code:
    - Change imports from old path to `github.com/dibbla-agents/sdk-go`
-   - Change `sdk.New()` to `dibbla.New()`
+   - The package name remains `sdk`, so `sdk.New()` stays the same
    - All other APIs remain the same!
 
 3. (Optional) Enable TLS if connecting to production:
