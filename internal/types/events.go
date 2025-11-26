@@ -54,4 +54,11 @@ const (
 	EventRequestServerName     = "request_server_name"
 	EventResponseServerName    = "response_server_name"
 	EventRequestServerInfo     = "request_server_info"
+
+	// OAuth events - Request access tokens for external services (Google, Microsoft, GitHub)
+	EventOAuthTokenRequest   = "oauth_token_request"
+	EventOAuthTokenResponse  = "oauth_token_response"
+	EventOAuthStatusRequest  = "oauth_status_request"
+	EventOAuthStatusResponse = "oauth_status_response"
+	EventOAuthError          = "oauth_error"
 )

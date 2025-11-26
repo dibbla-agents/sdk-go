@@ -25,6 +25,10 @@ func main() {
 	server.RegisterFunction(examples.InputFunction())
 	server.RegisterFunction(examples.StoreChatHistoryFunction())
 
+	// OAuth example functions
+	server.RegisterFunction(examples.GetGoogleTokenFunction())
+	server.RegisterFunction(examples.CheckConnectedProvidersFunction())
+
 	// Start server (this will handle all initialization and block forever)
 	log.Println("Starting server with SDK...")
 	if err := server.Start(); err != nil {

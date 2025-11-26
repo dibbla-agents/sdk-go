@@ -272,6 +272,103 @@ server := sdk.New()  // package name is still "sdk"
 - Automatic cache key generation
 - gRPC-based distributed cache
 
+### OAuth Access Tokens
+
+The SDK provides built-in support for requesting OAuth access tokens on behalf of the user running the workflow. This allows your functions to call third-party APIs (Google, Microsoft, GitHub) using the user's connected accounts.
+
+#### Supported Providers
+
+- `oauth.ProviderGoogle` - Google APIs (Gmail, Calendar, Drive, etc.)
+- `oauth.ProviderMicrosoft` - Microsoft APIs (Outlook, OneDrive, Teams, etc.)
+- `oauth.ProviderGitHub` - GitHub API
+
+#### Requesting an Access Token
+
+```go
+import (
+    "context"
+    "time"
+
+    sdk "github.com/dibbla-agents/sdk-go"
+    "github.com/dibbla-agents/sdk-go/internal/oauth"
+    "github.com/dibbla-agents/sdk-go/internal/state"
+    "github.com/dibbla-agents/sdk-go/internal/types"
+)
+
+func NewGoogleAPIFunction() sdk.FunctionBuilder {
+    return sdk.NewFunction[MyInput, MyOutput](
+        "call_google_api",
+        "1.0.0",
+        "Calls a Google API on behalf of the user",
+    ).WithHandler(func(input MyInput, event *types.EventMessage, gs *state.GlobalState) (MyOutput, error) {
+        // Get an access token for Google
+        ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+        defer cancel()
+
+        token, err := gs.OAuth.GetAccessToken(ctx, oauth.ProviderGoogle, event.Run)
+        if err != nil {
+            return MyOutput{}, fmt.Errorf("failed to get Google token: %w", err)
+        }
+
+        // Use the token to call Google APIs
+        // token.AccessToken - the bearer token
+        // token.TokenType   - typically "Bearer"
+        // token.ExpiresAt   - Unix timestamp when token expires
+
+        return MyOutput{...}, nil
+    })
+}
+```
+
+#### Checking Connected Providers
+
+You can check which OAuth providers the user has connected before attempting to request tokens:
+
+```go
+func NewCheckConnectionsFunction() sdk.FunctionBuilder {
+    return sdk.NewFunction[EmptyInput, ProvidersOutput](
+        "check_connections",
+        "1.0.0",
+        "Checks which OAuth providers the user has connected",
+    ).WithHandler(func(input EmptyInput, event *types.EventMessage, gs *state.GlobalState) (ProvidersOutput, error) {
+        ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+        defer cancel()
+
+        providers, err := gs.OAuth.GetConnectedProviders(ctx, event.Run)
+        if err != nil {
+            return ProvidersOutput{}, err
+        }
+
+        // providers is a map[string]*oauth.ProviderStatus
+        // Each status contains: Email, LastUsed, Scopes
+
+        return ProvidersOutput{Providers: providers}, nil
+    })
+}
+```
+
+#### OAuth Error Handling
+
+When a user hasn't connected a provider, the OAuth request will return an error. Handle this gracefully:
+
+```go
+token, err := gs.OAuth.GetAccessToken(ctx, oauth.ProviderGoogle, event.Run)
+if err != nil {
+    // Check if it's an OAuth-specific error
+    if oauthErr, ok := err.(*oauth.OAuthError); ok {
+        switch oauthErr.Code {
+        case "not_connected":
+            return Output{}, fmt.Errorf("Please connect your Google account first")
+        case "token_expired":
+            return Output{}, fmt.Errorf("Your Google connection needs to be refreshed")
+        default:
+            return Output{}, fmt.Errorf("OAuth error: %s", oauthErr.Message)
+        }
+    }
+    return Output{}, err
+}
+```
+
 ### Robust Connection Management
 
 - Automatic reconnection on failure

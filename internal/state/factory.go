@@ -2,12 +2,14 @@ package state
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/dibbla-agents/sdk-go/internal/basefunction"
 	"github.com/dibbla-agents/sdk-go/internal/communication"
 	"github.com/dibbla-agents/sdk-go/internal/grpccache"
 	"github.com/dibbla-agents/sdk-go/internal/grpcstore"
 	"github.com/dibbla-agents/sdk-go/internal/maps"
-	"os"
+	"github.com/dibbla-agents/sdk-go/internal/oauth"
 )
 
 // CommunicationConfig holds configuration for communication setup
@@ -46,10 +48,11 @@ func NewGlobalStateWithMode(config CommunicationConfig) (*GlobalState, error) {
 	// RPC client will be set up separately to avoid import cycles
 	gs.RpcClient = nil
 
-	// Initialize gRPC cache client when a communicator exists
+	// Initialize gRPC clients when a communicator exists
 	if gs.WorkflowComm != nil {
 		gs.GrpcCache = grpccache.NewClient(gs.WorkflowComm, config.ServerName)
 		gs.GrpcStore = grpcstore.NewClient(gs.WorkflowComm, config.ServerName)
+		gs.OAuth = oauth.NewClient(gs.WorkflowComm, config.ServerName)
 	}
 
 	return gs, nil

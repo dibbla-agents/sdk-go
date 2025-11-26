@@ -7,12 +7,14 @@ import (
 	"github.com/dibbla-agents/sdk-go/internal/grpccache"
 	"github.com/dibbla-agents/sdk-go/internal/grpcstore"
 	"github.com/dibbla-agents/sdk-go/internal/maps"
+	"github.com/dibbla-agents/sdk-go/internal/oauth"
 	"github.com/dibbla-agents/sdk-go/internal/rpc"
 )
 
 type GlobalState struct {
 	GrpcCache        *grpccache.Client
 	GrpcStore        *grpcstore.Client
+	OAuth            *oauth.Client
 	ServerName       string
 	Functions        *maps.SafeFunctionMap[string, basefunction.FunctionInterface]
 	ResponseHandlers *maps.SafeFunctionMap[string, chan *[]byte]

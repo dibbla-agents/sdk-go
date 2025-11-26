@@ -52,6 +52,22 @@ func HandleIncomingWorkflow(gs *state.GlobalState) {
 		}
 	})
 
+	gs.Dispatcher.Register(types.EventOAuthTokenResponse, func(message *types.EventMessage) {
+		if gs.OAuth != nil {
+			gs.OAuth.HandleResponse(*message)
+		}
+	})
+	gs.Dispatcher.Register(types.EventOAuthStatusResponse, func(message *types.EventMessage) {
+		if gs.OAuth != nil {
+			gs.OAuth.HandleResponse(*message)
+		}
+	})
+	gs.Dispatcher.Register(types.EventOAuthError, func(message *types.EventMessage) {
+		if gs.OAuth != nil {
+			gs.OAuth.HandleResponse(*message)
+		}
+	})
+
 	gs.Dispatcher.Register(types.EventRequestListFunctions, func(message *types.EventMessage) {
 		fs := state.NewEventState(message.Server, message.Function, message.Version, message.Node, message.Workflow, message.Run, gs.ServerName, message.CorrelationID)
 		HandleListFunctions(gs, fs)
@@ -70,11 +86,30 @@ func HandleIncomingWorkflow(gs *state.GlobalState) {
 	incomingEvents := gs.WorkflowComm.ReceiveEvents()
 	for msg := range incomingEvents {
 		log.Println("Received workflow message with event: " + msg.Event + " and workflow: " + msg.Workflow)
-		if msg.Workflow == "" && msg.Event != types.EventCacheGetResponse && msg.Event != types.EventCacheSetResponse && msg.Event != types.EventStoreGetResponse && msg.Event != types.EventStoreSetResponse && msg.Event != types.EventRequestServerInfo && msg.Event != types.EventRequestServerName && msg.Event != types.EventRequestListFunctions {
+		if msg.Workflow == "" && !isWorkflowOptionalEvent(msg.Event) {
 			log.Println("Workflow is empty, skipping")
 			continue
 		}
 		gs.Dispatcher.Dispatch(msg)
+	}
+}
+
+// isWorkflowOptionalEvent returns true for events that don't require a workflow field
+func isWorkflowOptionalEvent(event string) bool {
+	switch event {
+	case types.EventCacheGetResponse,
+		types.EventCacheSetResponse,
+		types.EventStoreGetResponse,
+		types.EventStoreSetResponse,
+		types.EventOAuthTokenResponse,
+		types.EventOAuthStatusResponse,
+		types.EventOAuthError,
+		types.EventRequestServerInfo,
+		types.EventRequestServerName,
+		types.EventRequestListFunctions:
+		return true
+	default:
+		return false
 	}
 }
 

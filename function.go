@@ -121,3 +121,4 @@ func (f *SimpleFunction[In, Out]) Build(gs *state.GlobalState) basefunction.Func
 }
 
 
+
