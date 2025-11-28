@@ -29,6 +29,10 @@ func main() {
 	server.RegisterFunction(examples.GetGoogleTokenFunction())
 	server.RegisterFunction(examples.CheckConnectedProvidersFunction())
 
+	// Google Sheets examples
+	server.RegisterFunction(examples.ReadGoogleSheetsFunction())
+	server.RegisterFunction(examples.UpdateGoogleSheetsFunction())
+
 	// Start server (this will handle all initialization and block forever)
 	log.Println("Starting server with SDK...")
 	if err := server.Start(); err != nil {
