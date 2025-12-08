@@ -158,6 +158,14 @@ docker run -e SERVER_NAME=my-worker \
 sdk-go/
 ├── sdk.go, config.go, function.go  # Public API (package sdk)
 ├── go.mod                          # Single module for entire project
+├── jobs/                           # Jobs subpackage for long-running tasks
+│   ├── host.go                     # JobHost - main entry point
+│   ├── types.go                    # JobHandler interface, JobEventMeta
+│   ├── context.go                  # JobContext for execution
+│   ├── logger.go                   # Logger for job events via gRPC
+│   ├── registry.go                 # Job handler registry
+│   ├── progress.go                 # Terminal progress bar
+│   └── helpers.go                  # Utility functions
 ├── internal/                       # Private implementation
 │   ├── communication/              # gRPC communication with TLS
 │   ├── state/                      # Global state management
@@ -204,6 +212,121 @@ fn := sdk.NewFunction[Input, Output](name, version, description)
         return output, nil
     })
     .WithCacheTTL(5 * time.Minute)
+```
+
+### Long-Running Jobs
+
+For long-running background tasks that need progress reporting and task tracking, use the Jobs subpackage. Jobs run asynchronously and can report progress, log messages, and track individual tasks.
+
+#### Creating a JobHost
+
+```go
+import (
+    "os"
+
+    "github.com/dibbla-agents/sdk-go"
+    "github.com/dibbla-agents/sdk-go/jobs"
+)
+
+func main() {
+    // Create SDK server (establishes gRPC connection)
+    server, err := sdk.New(
+        sdk.WithServerName("my-worker"),
+        sdk.WithServerApiToken(os.Getenv("SERVER_API_TOKEN")),
+    )
+    if err != nil {
+        panic(err)
+    }
+
+    // Create job host using the same GlobalState
+    jobHost := jobs.NewJobHost(server.GetGlobalState(), "my-job-host")
+
+    // Register jobs
+    jobHost.RegisterJob(&DataProcessingJob{})
+
+    // Register functions (existing pattern - unchanged)
+    server.RegisterFunction(myFunctionBuilder)
+
+    // Start job host (registers with server, sets up trigger handler)
+    if err := jobHost.Start(); err != nil {
+        panic(err)
+    }
+
+    // Start server (blocks forever, handles both functions and jobs)
+    server.Start()
+}
+```
+
+#### Implementing a Job Handler
+
+Jobs implement the `JobHandler` interface:
+
+```go
+import "github.com/dibbla-agents/sdk-go/jobs"
+
+type DataProcessingJob struct{}
+
+func (j *DataProcessingJob) GetJobID() string   { return "data_processing" }
+func (j *DataProcessingJob) GetJobName() string { return "Data Processing Job" }
+
+func (j *DataProcessingJob) GetParameters() []jobs.JobParameter {
+    return []jobs.JobParameter{
+        {Name: "source", Type: "string", Required: true},
+        {Name: "batch_size", Type: "integer", Required: false, Default: 100},
+    }
+}
+
+func (j *DataProcessingJob) Execute(ctx *jobs.JobContext) error {
+    source := ctx.GetStringArg("source", "default")
+    batchSize := ctx.GetIntArg("batch_size", 100)
+
+    ctx.Logger.Info(fmt.Sprintf("Starting data processing from %s (batch: %d)", source, batchSize))
+
+    // Task 1: Fetch data
+    ctx.Logger.TaskStarted("fetch_data")
+    // ... fetch logic
+    ctx.Logger.TaskCompleted()
+
+    // Task 2: Process with progress reporting
+    ctx.Logger.TaskStarted("process_data")
+    total := 150
+    for i := 0; i < total; i++ {
+        ctx.Logger.Progress(i+1, total, "Processing records")
+        // ... processing logic
+    }
+    ctx.Logger.CompleteProgress()
+    ctx.Logger.TaskCompleted()
+
+    ctx.Logger.Info("Data processing completed successfully")
+    return nil
+}
+```
+
+#### Job Context
+
+The `JobContext` provides:
+
+- `RunID`, `JobID`, `JobName` - Identifiers for the current job execution
+- `Args` - Arguments passed when the job was triggered
+- `Logger` - Logger for sending events via gRPC
+- Helper methods: `GetStringArg()`, `GetIntArg()`, `GetBoolArg()`, `GetFloat64Arg()`
+
+#### Logger Methods
+
+The job logger sends events via gRPC and outputs to console:
+
+```go
+ctx.Logger.Info("message")           // Info log
+ctx.Logger.Warn("message")           // Warning log
+ctx.Logger.Error("message")          // Error log
+
+ctx.Logger.TaskStarted("task_name")  // Start a task
+ctx.Logger.TaskCompleted()           // Complete current task
+ctx.Logger.TaskFailed(err)           // Fail current task
+ctx.Logger.TaskSkipped("reason")     // Skip current task
+
+ctx.Logger.Progress(50, 100, "msg")  // Progress with total
+ctx.Logger.CompleteProgress()        // Finish progress bar
 ```
 
 ## Migration from Previous Versions
@@ -271,6 +394,14 @@ server := sdk.New()  // package name is still "sdk"
 - Per-function cache TTL configuration
 - Automatic cache key generation
 - gRPC-based distributed cache
+
+### Long-Running Jobs
+
+- JobHost for background task execution via gRPC
+- Progress reporting with terminal progress bar
+- Task tracking (started, completed, failed, skipped)
+- Structured logging sent as gRPC events
+- Full integration with existing SDK infrastructure
 
 ### OAuth Access Tokens
 

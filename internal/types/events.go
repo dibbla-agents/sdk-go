@@ -62,3 +62,18 @@ const (
 	EventOAuthStatusResponse = "oauth_status_response"
 	EventOAuthError          = "oauth_error"
 )
+
+// Job events - for long-running job execution via gRPC
+const (
+	EventJobRegistration = "job_registration"
+	EventJobTrigger      = "job_trigger"
+	EventJobStarted      = "job_started"
+	EventJobCompleted    = "job_completed"
+	EventJobFailed       = "job_failed"
+	EventTaskStarted     = "task_started"
+	EventTaskCompleted   = "task_completed"
+	EventTaskFailed      = "task_failed"
+	EventTaskSkipped     = "task_skipped"
+	EventLogMessage      = "log_message"
+	EventProgressUpdate  = "progress_update"
+)
