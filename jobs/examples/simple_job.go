@@ -79,7 +79,8 @@ func (j *SimpleJob) Execute(ctx *jobs.JobContext) error {
 //	    sdk.WithServerApiToken(os.Getenv("SERVER_API_TOKEN")),
 //	)
 //
-//	jobHost := jobs.NewJobHost(server.GetGlobalState(), "my-job-host")
+//	// Create job host from server (handles initialization automatically)
+//	jobHost, _ := server.NewJobHost("my-job-host")
 //	jobHost.RegisterJob(&examples.SimpleJob{})
 //	jobHost.Start()
 //

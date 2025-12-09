@@ -9,7 +9,8 @@ import (
 	"github.com/dibbla-agents/sdk-go/internal/types"
 )
 
-// JobHost manages job registration and execution via gRPC
+// JobHost manages job registration and execution via gRPC.
+// Create a JobHost using server.NewJobHost() which handles initialization automatically.
 type JobHost struct {
 	globalState *state.GlobalState
 	registry    *JobRegistry
@@ -20,8 +21,15 @@ type JobHost struct {
 	started bool
 }
 
-// NewJobHost creates a new JobHost using the SDK's GlobalState
-// The hostID identifies this job host to the server
+// NewJobHost creates a new JobHost using the SDK's GlobalState.
+// This is called internally by server.NewJobHost() - use that method instead
+// to ensure proper initialization:
+//
+//	server, _ := sdk.New(sdk.WithServerName("my-worker"))
+//	jobHost, _ := server.NewJobHost("my-job-host")
+//	jobHost.RegisterJob(&MyJob{})
+//	jobHost.Start()
+//	server.Start()
 func NewJobHost(gs *state.GlobalState, hostID string) *JobHost {
 	return &JobHost{
 		globalState: gs,

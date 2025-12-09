@@ -222,24 +222,27 @@ For long-running background tasks that need progress reporting and task tracking
 
 ```go
 import (
+    "log"
     "os"
 
     "github.com/dibbla-agents/sdk-go"
-    "github.com/dibbla-agents/sdk-go/jobs"
 )
 
 func main() {
-    // Create SDK server (establishes gRPC connection)
+    // Create SDK server
     server, err := sdk.New(
         sdk.WithServerName("my-worker"),
         sdk.WithServerApiToken(os.Getenv("SERVER_API_TOKEN")),
     )
     if err != nil {
-        panic(err)
+        log.Fatal(err)
     }
 
-    // Create job host using the same GlobalState
-    jobHost := jobs.NewJobHost(server.GetGlobalState(), "my-job-host")
+    // Create job host from server (handles gRPC initialization automatically)
+    jobHost, err := server.NewJobHost("my-job-host")
+    if err != nil {
+        log.Fatal(err)
+    }
 
     // Register jobs
     jobHost.RegisterJob(&DataProcessingJob{})
@@ -249,7 +252,7 @@ func main() {
 
     // Start job host (registers with server, sets up trigger handler)
     if err := jobHost.Start(); err != nil {
-        panic(err)
+        log.Fatal(err)
     }
 
     // Start server (blocks forever, handles both functions and jobs)
@@ -330,6 +333,28 @@ ctx.Logger.CompleteProgress()        // Finish progress bar
 ```
 
 ## Migration from Previous Versions
+
+### v0.0.9 Breaking Changes
+
+The JobHost creation API has changed for better initialization handling:
+
+```go
+// Old (v0.0.8 and earlier) - could crash if called before server.Start()
+jobHost := jobs.NewJobHost(server.GetGlobalState(), "my-job-host")
+
+// New (v0.0.9+) - handles initialization automatically
+jobHost, err := server.NewJobHost("my-job-host")
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+The new `server.NewJobHost()` method:
+- Automatically initializes the server's gRPC connection if not already done
+- Returns an error instead of crashing on nil GlobalState
+- Provides a cleaner API that doesn't expose internal types
+
+### Migrating from FatsharkStudiosAB/codex
 
 If you're migrating from `github.com/FatsharkStudiosAB/codex/workflows/workers/go/sdk`:
 

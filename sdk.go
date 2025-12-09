@@ -10,6 +10,7 @@ import (
 	"github.com/dibbla-agents/sdk-go/internal/rpc"
 	"github.com/dibbla-agents/sdk-go/internal/state"
 	"github.com/dibbla-agents/sdk-go/internal/types"
+	"github.com/dibbla-agents/sdk-go/jobs"
 
 	"github.com/joho/godotenv"
 )
@@ -186,9 +187,16 @@ func (s *Server) sendStartupBroadcast() {
 	log.Println("Startup function list broadcast sent")
 }
 
-// Start initializes and starts the server
-func (s *Server) Start() error {
-	log.Printf("Starting server with name: %s", s.config.ServerName)
+// Init initializes the server's global state and gRPC connections.
+// This is called automatically by Start() and NewJobHost(), but can be called
+// explicitly if you need access to GlobalState before starting the server.
+// Multiple calls to Init() are safe - subsequent calls are no-ops.
+func (s *Server) Init() error {
+	if s.globalState != nil {
+		return nil // Already initialized
+	}
+
+	log.Printf("Initializing server: %s", s.config.ServerName)
 
 	// Initialize environment
 	if err := s.initializeEnvironment(); err != nil {
@@ -198,6 +206,32 @@ func (s *Server) Start() error {
 	// Initialize global state
 	if err := s.initializeGlobalState(); err != nil {
 		return fmt.Errorf("failed to initialize global state: %w", err)
+	}
+
+	return nil
+}
+
+// NewJobHost creates a JobHost attached to this server for running long-running jobs.
+// The server is automatically initialized if not already done.
+// The hostID identifies this job host to the workflow server (typically use the server name).
+func (s *Server) NewJobHost(hostID string) (*jobs.JobHost, error) {
+	// Auto-initialize if needed
+	if s.globalState == nil {
+		if err := s.Init(); err != nil {
+			return nil, fmt.Errorf("failed to initialize server for job host: %w", err)
+		}
+	}
+
+	return jobs.NewJobHost(s.globalState, hostID), nil
+}
+
+// Start initializes and starts the server
+func (s *Server) Start() error {
+	log.Printf("Starting server with name: %s", s.config.ServerName)
+
+	// Initialize if not already done (e.g., by NewJobHost)
+	if err := s.Init(); err != nil {
+		return err
 	}
 
 	// Register and publish functions
