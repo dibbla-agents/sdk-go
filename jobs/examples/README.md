@@ -43,7 +43,6 @@ import (
     "os"
 
     "github.com/dibbla-agents/sdk-go"
-    "github.com/dibbla-agents/sdk-go/jobs"
     "github.com/dibbla-agents/sdk-go/jobs/examples"
 )
 
@@ -57,19 +56,11 @@ func main() {
         panic(err)
     }
 
-    // Create job host
-    jobHost := jobs.NewJobHost(server.GetGlobalState(), "my-job-host")
+    // Register jobs directly with the server
+    server.RegisterJob(&examples.SimpleJob{})
+    server.RegisterJob(&examples.DataProcessingJob{})
 
-    // Register example jobs
-    jobHost.RegisterJob(&examples.SimpleJob{})
-    jobHost.RegisterJob(&examples.DataProcessingJob{})
-
-    // Start job host
-    if err := jobHost.Start(); err != nil {
-        panic(err)
-    }
-
-    // Start server (blocks forever)
+    // Start server - handles connection, registration, and blocking
     server.Start()
 }
 ```

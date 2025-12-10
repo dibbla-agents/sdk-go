@@ -1,6 +1,10 @@
 package communication
 
-import "github.com/dibbla-agents/sdk-go/internal/types"
+import (
+	"time"
+
+	"github.com/dibbla-agents/sdk-go/internal/types"
+)
 
 // WorkflowCommunicator defines the interface for communicating with the workflow server
 type WorkflowCommunicator interface {
@@ -15,5 +19,11 @@ type WorkflowCommunicator interface {
 
 	// IsConnected returns whether the communicator is currently connected
 	IsConnected() bool
-}
 
+	// WaitForConnection blocks until the connection is established or timeout occurs
+	WaitForConnection(timeout time.Duration) error
+
+	// SetOnReconnect sets a callback that will be called when the connection is
+	// re-established after a disconnect
+	SetOnReconnect(callback func())
+}

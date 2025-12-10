@@ -4,13 +4,14 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"github.com/dibbla-agents/sdk-go/internal/types"
-	"github.com/dibbla-agents/sdk-go/internal/workflowsgrpc"
 	"io"
 	"log"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dibbla-agents/sdk-go/internal/types"
+	"github.com/dibbla-agents/sdk-go/internal/workflowsgrpc"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -39,9 +40,14 @@ type GrpcCommunicator struct {
 	cancel context.CancelFunc
 
 	// Synchronization
-	mu          sync.RWMutex
-	connected   bool
-	reconnectCh chan struct{}
+	mu            sync.RWMutex
+	connected     bool
+	reconnectCh   chan struct{}
+	connectedCh   chan struct{} // Closed on first successful connection
+	connectedOnce sync.Once
+
+	// Reconnect callback - called when connection is re-established after a disconnect
+	onReconnect func()
 
 	// Configurable intervals (seconds). If 0, defaults are used by caller.
 	reconnectIntervalSec   int
@@ -61,6 +67,7 @@ func NewGrpcCommunicator(serverAddress, serverName, apiToken string) *GrpcCommun
 		ctx:                    ctx,
 		cancel:                 cancel,
 		reconnectCh:            make(chan struct{}, 1),
+		connectedCh:            make(chan struct{}),
 		reconnectIntervalSec:   5,
 		healthcheckIntervalSec: 30,
 	}
@@ -108,6 +115,7 @@ func NewGrpcCommunicatorWithTLS(serverAddress, serverName, apiToken string, inco
 		ctx:                    ctx,
 		cancel:                 cancel,
 		reconnectCh:            make(chan struct{}, 1),
+		connectedCh:            make(chan struct{}),
 		reconnectIntervalSec:   reconnectIntervalSec,
 		healthcheckIntervalSec: healthcheckIntervalSec,
 		pingIntervalSec:        pingIntervalSec,
@@ -158,7 +166,7 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 	}
 
 	log.Printf("Attempting to connect to gRPC server at %s...", gc.serverAddress)
-	
+
 	// Warn if no API token is provided
 	if gc.apiToken == "" {
 		log.Printf("⚠️  Warning: No API token provided. Set SERVER_API_TOKEN environment variable for authentication.")
@@ -257,6 +265,14 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 	gc.stream = stream
 	gc.connected = true
 
+	// Signal first connection (for WaitForConnection)
+	// Also track if this is a reconnect for the callback
+	isReconnect := true
+	gc.connectedOnce.Do(func() {
+		close(gc.connectedCh)
+		isReconnect = false
+	})
+
 	// Start message handler
 	go gc.receiveMessages()
 
@@ -266,6 +282,12 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 	}
 
 	log.Printf("✅ gRPC client successfully connected to workflow server at %s", gc.serverAddress)
+
+	// Call reconnect callback if this is a reconnection (not first connect)
+	if isReconnect && gc.onReconnect != nil {
+		go gc.onReconnect()
+	}
+
 	return true
 }
 
@@ -449,6 +471,26 @@ func (gc *GrpcCommunicator) IsConnected() bool {
 	gc.mu.RLock()
 	defer gc.mu.RUnlock()
 	return gc.connected
+}
+
+// WaitForConnection blocks until the connection is established or timeout/cancellation occurs
+func (gc *GrpcCommunicator) WaitForConnection(timeout time.Duration) error {
+	select {
+	case <-gc.connectedCh:
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("connection timeout after %v", timeout)
+	case <-gc.ctx.Done():
+		return gc.ctx.Err()
+	}
+}
+
+// SetOnReconnect sets a callback that will be called when the connection is re-established
+// after a disconnect. This is useful for re-registering with the server.
+func (gc *GrpcCommunicator) SetOnReconnect(callback func()) {
+	gc.mu.Lock()
+	defer gc.mu.Unlock()
+	gc.onReconnect = callback
 }
 
 // pingLoop sends ping messages at the configured interval

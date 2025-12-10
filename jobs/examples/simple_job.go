@@ -70,7 +70,7 @@ func (j *SimpleJob) Execute(ctx *jobs.JobContext) error {
 	return nil
 }
 
-// ExampleSimpleJobUsage shows how to register and use SimpleJob with a JobHost.
+// ExampleSimpleJobUsage shows how to register and use SimpleJob.
 //
 // Usage with SDK server:
 //
@@ -79,11 +79,10 @@ func (j *SimpleJob) Execute(ctx *jobs.JobContext) error {
 //	    sdk.WithServerApiToken(os.Getenv("SERVER_API_TOKEN")),
 //	)
 //
-//	// Create job host from server (handles initialization automatically)
-//	jobHost, _ := server.NewJobHost("my-job-host")
-//	jobHost.RegisterJob(&examples.SimpleJob{})
-//	jobHost.Start()
+//	// Register job directly with the server
+//	server.RegisterJob(&examples.SimpleJob{})
 //
+//	// Start handles everything: connection, registration, and blocking
 //	server.Start()
 func ExampleSimpleJobUsage() {
 	// This is a documentation example - see the function comment for usage

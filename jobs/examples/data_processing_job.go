@@ -226,11 +226,10 @@ func (j *DataProcessingJob) generateReport(ctx *jobs.JobContext) error {
 //	    sdk.WithServerApiToken(os.Getenv("SERVER_API_TOKEN")),
 //	)
 //
-//	// Create job host from server (handles initialization automatically)
-//	jobHost, _ := server.NewJobHost("data-job-host")
-//	jobHost.RegisterJob(&examples.DataProcessingJob{})
-//	jobHost.Start()
+//	// Register job directly with the server
+//	server.RegisterJob(&examples.DataProcessingJob{})
 //
+//	// Start handles everything: connection, registration, and blocking
 //	server.Start()
 //
 // The job can be triggered with parameters:

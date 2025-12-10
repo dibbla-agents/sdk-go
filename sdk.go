@@ -1,8 +1,10 @@
 package sdk
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/dibbla-agents/sdk-go/internal/basefunction"
 	"github.com/dibbla-agents/sdk-go/internal/dispatcher"
@@ -20,6 +22,7 @@ type Server struct {
 	config      *Config
 	globalState *state.GlobalState
 	functions   []FunctionBuilder
+	jobs        []jobs.JobHandler
 }
 
 // New creates a new SDK server instance with the provided options
@@ -35,6 +38,7 @@ func New(opts ...Option) (*Server, error) {
 	server := &Server{
 		config:    config,
 		functions: make([]FunctionBuilder, 0),
+		jobs:      make([]jobs.JobHandler, 0),
 	}
 
 	return server, nil
@@ -43,6 +47,12 @@ func New(opts ...Option) (*Server, error) {
 // RegisterFunction adds a function to the server
 func (s *Server) RegisterFunction(fn FunctionBuilder) {
 	s.functions = append(s.functions, fn)
+}
+
+// RegisterJob adds a job handler to the server.
+// Jobs will be registered with the workflow server when Start() is called.
+func (s *Server) RegisterJob(handler jobs.JobHandler) {
+	s.jobs = append(s.jobs, handler)
 }
 
 // initializeEnvironment loads environment files as needed
@@ -211,28 +221,23 @@ func (s *Server) Init() error {
 	return nil
 }
 
-// NewJobHost creates a JobHost attached to this server for running long-running jobs.
-// The server is automatically initialized if not already done.
-// The hostID identifies this job host to the workflow server (typically use the server name).
-func (s *Server) NewJobHost(hostID string) (*jobs.JobHost, error) {
-	// Auto-initialize if needed
-	if s.globalState == nil {
-		if err := s.Init(); err != nil {
-			return nil, fmt.Errorf("failed to initialize server for job host: %w", err)
-		}
-	}
-
-	return jobs.NewJobHost(s.globalState, hostID), nil
-}
-
 // Start initializes and starts the server
 func (s *Server) Start() error {
 	log.Printf("Starting server with name: %s", s.config.ServerName)
 
-	// Initialize if not already done (e.g., by NewJobHost)
+	// Initialize if not already done
 	if err := s.Init(); err != nil {
 		return err
 	}
+
+	// Wait for gRPC connection before sending any registrations
+	log.Println("Waiting for gRPC connection...")
+	if err := s.globalState.WorkflowComm.WaitForConnection(30 * time.Second); err != nil {
+		return fmt.Errorf("failed to establish connection: %w", err)
+	}
+
+	// Setup reconnect callback to re-register everything on reconnect
+	s.globalState.WorkflowComm.SetOnReconnect(s.onReconnect)
 
 	// Register and publish functions
 	s.registerAndPublishFunctions()
@@ -243,12 +248,220 @@ func (s *Server) Start() error {
 	// Send startup broadcast
 	s.sendStartupBroadcast()
 
+	// Register jobs if any
+	if len(s.jobs) > 0 {
+		s.registerJobTriggerHandler()
+		s.registerJobs()
+	}
+
 	// Activate handlers
 	handlers.Activate(s.globalState)
 	log.Println("Stream listeners activated, server running...")
 
 	// Block forever
 	select {}
+}
+
+// registerJobs sends job registration event to the workflow server
+func (s *Server) registerJobs() {
+	if len(s.jobs) == 0 {
+		return
+	}
+
+	// Build job schemas from registered jobs
+	jobSchemas := make(map[string]interface{})
+	jobIDs := make([]string, 0, len(s.jobs))
+
+	for _, handler := range s.jobs {
+		params := handler.GetParameters()
+		paramMap := make(map[string]interface{})
+		for _, p := range params {
+			paramMap[p.Name] = map[string]interface{}{
+				"type":     p.Type,
+				"required": p.Required,
+				"default":  p.Default,
+			}
+		}
+
+		jobSchemas[handler.GetJobID()] = map[string]interface{}{
+			"name":       handler.GetJobName(),
+			"parameters": paramMap,
+		}
+		jobIDs = append(jobIDs, handler.GetJobID())
+	}
+
+	meta := map[string]any{
+		"host_id": s.config.ServerName,
+		"jobs":    jobSchemas,
+	}
+
+	event := &types.EventMessage{
+		Server: s.globalState.ServerName,
+		Event:  types.EventJobRegistration,
+		Meta:   &meta,
+	}
+
+	if err := s.globalState.WorkflowComm.SendEvent(event); err != nil {
+		log.Printf("Failed to send job registration: %v", err)
+	} else {
+		log.Printf("Registered %d jobs: %v", len(s.jobs), jobIDs)
+	}
+}
+
+// registerJobTriggerHandler registers the handler for incoming job triggers
+func (s *Server) registerJobTriggerHandler() {
+	s.globalState.Dispatcher.Register(types.EventJobTrigger, s.handleJobTrigger)
+}
+
+// handleJobTrigger processes incoming job_trigger events from the server
+func (s *Server) handleJobTrigger(msg *types.EventMessage) {
+	meta := jobs.ParseJobEventMeta(msg.Meta)
+
+	log.Printf("Received job trigger: job_id=%s, run_id=%s", meta.JobID, msg.Run)
+
+	// Parse job arguments from payload
+	var args map[string]interface{}
+	if msg.Payload != nil && len(*msg.Payload) > 0 {
+		if err := json.Unmarshal(*msg.Payload, &args); err != nil {
+			log.Printf("Failed to parse job arguments: %v", err)
+			s.sendJobFailed(msg.Run, meta.JobID, meta.JobName, err)
+			return
+		}
+	}
+
+	// Execute job asynchronously
+	go s.executeJob(msg.Run, meta.JobID, meta.JobName, args)
+}
+
+// executeJob runs a job and handles lifecycle events
+func (s *Server) executeJob(runID, jobID, jobName string, args map[string]interface{}) {
+	// Find the job handler
+	handler := s.getJobHandler(jobID)
+	if handler == nil {
+		err := fmt.Errorf("job not found: %s", jobID)
+		log.Printf("Job not found: %s", jobID)
+		s.sendJobFailed(runID, jobID, jobName, err)
+		return
+	}
+
+	// Use handler's job name if not provided
+	if jobName == "" {
+		jobName = handler.GetJobName()
+	}
+
+	// Create job context with logger
+	logger := s.createJobLogger(runID, jobID, jobName)
+	ctx := &jobs.JobContext{
+		RunID:   runID,
+		JobID:   jobID,
+		JobName: jobName,
+		Args:    args,
+		Logger:  logger,
+	}
+
+	// Send job_started event
+	s.sendJobStarted(runID, jobID, jobName)
+
+	// Execute the job
+	if err := handler.Execute(ctx); err != nil {
+		log.Printf("Job failed: job_id=%s, run_id=%s, error=%v", jobID, runID, err)
+		s.sendJobFailed(runID, jobID, jobName, err)
+		return
+	}
+
+	// Send job_completed event
+	s.sendJobCompleted(runID, jobID, jobName)
+	log.Printf("Job completed: job_id=%s, run_id=%s", jobID, runID)
+}
+
+// getJobHandler finds a job handler by its ID
+func (s *Server) getJobHandler(jobID string) jobs.JobHandler {
+	for _, handler := range s.jobs {
+		if handler.GetJobID() == jobID {
+			return handler
+		}
+	}
+	return nil
+}
+
+// createJobLogger creates a Logger for a specific job run
+func (s *Server) createJobLogger(runID, jobID, jobName string) *jobs.Logger {
+	return jobs.NewLogger(s.globalState.WorkflowComm, s.globalState.ServerName, runID, jobID, jobName)
+}
+
+// sendJobStarted sends job_started event
+func (s *Server) sendJobStarted(runID, jobID, jobName string) {
+	meta := jobs.NewJobEventMeta(jobID, jobName)
+	meta.Status = string(jobs.StatusInProgress)
+	metaMap := meta.ToMap()
+
+	event := &types.EventMessage{
+		Server:        s.globalState.ServerName,
+		Event:         types.EventJobStarted,
+		Run:           runID,
+		CorrelationID: runID,
+		Meta:          &metaMap,
+	}
+
+	if err := s.globalState.WorkflowComm.SendEvent(event); err != nil {
+		log.Printf("Failed to send job_started event: %v", err)
+	}
+}
+
+// sendJobCompleted sends job_completed event
+func (s *Server) sendJobCompleted(runID, jobID, jobName string) {
+	meta := jobs.NewJobEventMeta(jobID, jobName)
+	meta.Status = string(jobs.StatusCompleted)
+	metaMap := meta.ToMap()
+
+	event := &types.EventMessage{
+		Server:        s.globalState.ServerName,
+		Event:         types.EventJobCompleted,
+		Run:           runID,
+		CorrelationID: runID,
+		Meta:          &metaMap,
+	}
+
+	if err := s.globalState.WorkflowComm.SendEvent(event); err != nil {
+		log.Printf("Failed to send job_completed event: %v", err)
+	}
+}
+
+// sendJobFailed sends job_failed event
+func (s *Server) sendJobFailed(runID, jobID, jobName string, err error) {
+	meta := jobs.NewJobEventMeta(jobID, jobName)
+	meta.Status = string(jobs.StatusFailed)
+	meta.Error = err.Error()
+	metaMap := meta.ToMap()
+
+	event := &types.EventMessage{
+		Server:        s.globalState.ServerName,
+		Event:         types.EventJobFailed,
+		Run:           runID,
+		CorrelationID: runID,
+		Meta:          &metaMap,
+	}
+
+	if err := s.globalState.WorkflowComm.SendEvent(event); err != nil {
+		log.Printf("Failed to send job_failed event: %v", err)
+	}
+}
+
+// onReconnect is called when the gRPC connection is re-established after a disconnect.
+// It re-registers all functions and jobs with the workflow server.
+func (s *Server) onReconnect() {
+	log.Println("Connection re-established, re-registering with workflow server...")
+
+	// Re-register server and functions
+	s.registerServer()
+	s.sendStartupBroadcast()
+
+	// Re-register jobs if any
+	if len(s.jobs) > 0 {
+		s.registerJobs()
+	}
+
+	log.Println("Re-registration complete")
 }
 
 // GetGlobalState returns the global state for advanced use cases

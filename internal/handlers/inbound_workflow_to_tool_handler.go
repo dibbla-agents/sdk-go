@@ -2,9 +2,10 @@ package handlers
 
 import (
 	"fmt"
+	"log"
+
 	"github.com/dibbla-agents/sdk-go/internal/state"
 	"github.com/dibbla-agents/sdk-go/internal/types"
-	"log"
 )
 
 func HandleIncomingWorkflow(gs *state.GlobalState) {
@@ -106,7 +107,8 @@ func isWorkflowOptionalEvent(event string) bool {
 		types.EventOAuthError,
 		types.EventRequestServerInfo,
 		types.EventRequestServerName,
-		types.EventRequestListFunctions:
+		types.EventRequestListFunctions,
+		types.EventJobTrigger:
 		return true
 	default:
 		return false
