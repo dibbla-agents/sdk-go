@@ -86,10 +86,11 @@ func HandleIncomingWorkflow(gs *state.GlobalState) {
 	// Read from communicator and dispatch
 	incomingEvents := gs.WorkflowComm.ReceiveEvents()
 	for msg := range incomingEvents {
-		// Skip logging for ping/pong keep-alive messages
-		if msg.Event != types.EventPong {
-			log.Println("Received workflow message with event: " + msg.Event + " and workflow: " + msg.Workflow)
+		// Skip pong keep-alive responses entirely - they don't need processing
+		if msg.Event == types.EventPong {
+			continue
 		}
+		log.Println("Received workflow message with event: " + msg.Event + " and workflow: " + msg.Workflow)
 		if msg.Workflow == "" && !isWorkflowOptionalEvent(msg.Event) {
 			log.Println("Workflow is empty, skipping")
 			continue
@@ -111,8 +112,7 @@ func isWorkflowOptionalEvent(event string) bool {
 		types.EventRequestServerInfo,
 		types.EventRequestServerName,
 		types.EventRequestListFunctions,
-		types.EventJobTrigger,
-		types.EventPong:
+		types.EventJobTrigger:
 		return true
 	default:
 		return false
