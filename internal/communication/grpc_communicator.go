@@ -317,7 +317,10 @@ func (gc *GrpcCommunicator) SendEvent(event *types.EventMessage) error {
 		return fmt.Errorf("failed to send event: %w", err)
 	}
 
-	log.Printf("Sent event via gRPC: %s", event.Event)
+	// Skip logging for ping keep-alive messages
+	if event.Event != types.EventPing {
+		log.Printf("Sent event via gRPC: %s", event.Event)
+	}
 	return nil
 }
 
@@ -377,7 +380,10 @@ func (gc *GrpcCommunicator) receiveMessages() {
 		// Send to incoming events channel (non-blocking)
 		select {
 		case gc.incomingEvents <- eventMsg:
-			log.Printf("Received event via gRPC: %s", eventMsg.Event)
+			// Skip logging for pong keep-alive messages
+			if eventMsg.Event != types.EventPong {
+				log.Printf("Received event via gRPC: %s", eventMsg.Event)
+			}
 		default:
 			log.Printf("Incoming events channel full, dropping message: %s", eventMsg.Event)
 		}
@@ -531,8 +537,6 @@ func (gc *GrpcCommunicator) sendPing() {
 
 	if err := gc.SendEvent(pingEvent); err != nil {
 		log.Printf("Failed to send ping: %v", err)
-	} else {
-		log.Printf("Sent ping to workflow server")
 	}
 }
 
