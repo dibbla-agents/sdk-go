@@ -159,11 +159,10 @@ sdk-go/
 ├── sdk.go, config.go, function.go  # Public API (package sdk)
 ├── go.mod                          # Single module for entire project
 ├── jobs/                           # Jobs subpackage for long-running tasks
-│   ├── host.go                     # JobHost - main entry point
-│   ├── types.go                    # JobHandler interface, JobEventMeta
-│   ├── context.go                  # JobContext for execution
+│   ├── types.go                    # JobHandler interface, JobParameter, JobEventMeta
+│   ├── context.go                  # JobContext + type-safe arg helpers
 │   ├── logger.go                   # Logger for job events via gRPC
-│   ├── registry.go                 # Job handler registry
+│   ├── registry.go                 # Internal job handler registry
 │   ├── progress.go                 # Terminal progress bar
 │   └── helpers.go                  # Utility functions
 ├── internal/                       # Private implementation
@@ -218,7 +217,9 @@ fn := sdk.NewFunction[Input, Output](name, version, description)
 
 For long-running background tasks that need progress reporting and task tracking, use the Jobs subpackage. Jobs run asynchronously and can report progress, log messages, and track individual tasks.
 
-#### Creating a JobHost
+#### Registering Jobs
+
+Jobs are registered directly on the SDK server. There is no separate `JobHost` — `server.RegisterJob` is the only entry point, and `server.Start()` advertises every registered job in the workflow registration broadcast.
 
 ```go
 import (
@@ -229,7 +230,6 @@ import (
 )
 
 func main() {
-    // Create SDK server
     server, err := sdk.New(
         sdk.WithServerName("my-worker"),
         sdk.WithServerApiToken(os.Getenv("SERVER_API_TOKEN")),
@@ -238,25 +238,14 @@ func main() {
         log.Fatal(err)
     }
 
-    // Create job host from server (handles gRPC initialization automatically)
-    jobHost, err := server.NewJobHost("my-job-host")
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Register jobs
-    jobHost.RegisterJob(&DataProcessingJob{})
-
-    // Register functions (existing pattern - unchanged)
+    // Register functions and jobs in any order, before Start().
     server.RegisterFunction(myFunctionBuilder)
+    server.RegisterJob(&DataProcessingJob{})
 
-    // Start job host (registers with server, sets up trigger handler)
-    if err := jobHost.Start(); err != nil {
+    // Start handles connection, registration, and dispatch. Blocks forever.
+    if err := server.Start(); err != nil {
         log.Fatal(err)
     }
-
-    // Start server (blocks forever, handles both functions and jobs)
-    server.Start()
 }
 ```
 
@@ -334,25 +323,22 @@ ctx.Logger.CompleteProgress()        // Finish progress bar
 
 ## Migration from Previous Versions
 
-### v0.0.9 Breaking Changes
+### Removal of `JobHost`
 
-The JobHost creation API has changed for better initialization handling:
+The `JobHost` abstraction has been removed. Jobs now register directly on the server via `server.RegisterJob(handler)`, and the server handles gRPC initialization, the trigger dispatcher, and job lifecycle events as part of `server.Start()`.
 
 ```go
-// Old (v0.0.8 and earlier) - could crash if called before server.Start()
-jobHost := jobs.NewJobHost(server.GetGlobalState(), "my-job-host")
+// Old — no longer compiles
+jobHost, _ := server.NewJobHost("my-job-host")
+jobHost.RegisterJob(&MyJob{})
+jobHost.Start()
 
-// New (v0.0.9+) - handles initialization automatically
-jobHost, err := server.NewJobHost("my-job-host")
-if err != nil {
-    log.Fatal(err)
-}
+// Current
+server.RegisterJob(&MyJob{})
+server.Start()
 ```
 
-The new `server.NewJobHost()` method:
-- Automatically initializes the server's gRPC connection if not already done
-- Returns an error instead of crashing on nil GlobalState
-- Provides a cleaner API that doesn't expose internal types
+If you have code calling `server.NewJobHost(...)` or `jobs.NewJobHost(...)`, replace it with `server.RegisterJob(...)` calls and remove the separate `Start()` on the host — the SDK server now drives everything.
 
 ### Migrating from FatsharkStudiosAB/codex
 
@@ -422,7 +408,7 @@ server := sdk.New()  // package name is still "sdk"
 
 ### Long-Running Jobs
 
-- JobHost for background task execution via gRPC
+- Direct job registration on the SDK server (`server.RegisterJob`) for background task execution via gRPC
 - Progress reporting with terminal progress bar
 - Task tracking (started, completed, failed, skipped)
 - Structured logging sent as gRPC events

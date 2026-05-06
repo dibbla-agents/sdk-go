@@ -198,8 +198,8 @@ func (s *Server) sendStartupBroadcast() {
 }
 
 // Init initializes the server's global state and gRPC connections.
-// This is called automatically by Start() and NewJobHost(), but can be called
-// explicitly if you need access to GlobalState before starting the server.
+// This is called automatically by Start(), but can be called explicitly
+// if you need access to GlobalState before starting the server.
 // Multiple calls to Init() are safe - subsequent calls are no-ops.
 func (s *Server) Init() error {
 	if s.globalState != nil {
