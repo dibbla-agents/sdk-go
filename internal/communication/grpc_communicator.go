@@ -193,6 +193,13 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 		log.Printf("Connecting without TLS to %s", gc.serverAddress)
 	}
 
+	// Disable gRPC's DNS-based service-config discovery. We don't use it, and it
+	// makes the dns resolver issue an extra `TXT _grpc_config.<host>` lookup that
+	// can stall for ~20s on networks whose resolver doesn't answer that record
+	// (e.g. split-DNS / Tailscale setups where Go sends the query to a LAN
+	// nameserver that drops it). The A record still resolves normally.
+	opts = append(opts, grpc.WithDisableServiceConfig())
+
 	conn, err := grpc.NewClient(gc.serverAddress, opts...)
 	if err != nil {
 		log.Printf("Failed to create gRPC client: %v", err)
