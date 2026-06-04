@@ -17,6 +17,7 @@ type CommunicationConfig struct {
 	ServerName             string
 	GrpcServerAddress      string
 	ServerApiToken         string
+	OrgID                  string // optional: pin registration to a specific org
 	IncomingBuffer         int
 	ReconnectIntervalSec   int
 	HealthcheckIntervalSec int
@@ -99,6 +100,7 @@ func setupGrpcMode(gs *GlobalState, config CommunicationConfig) (communication.W
 		ping,
 		useTLS,
 	)
+	grpcCommunicator.SetOrgID(config.OrgID)
 
 	// Connect to gRPC server
 	if err := grpcCommunicator.Connect(); err != nil {

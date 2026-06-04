@@ -13,6 +13,7 @@ type Config struct {
 	CommunicationMode string // will be forced to "grpc"
 	GrpcServerAddress string // Address of the gRPC workflow server
 	ServerApiToken    string // API token for authentication
+	OrgID             string // optional: pin registration to a specific org (multi-org users)
 	GrpcUseTLS        *bool  // nil = auto-detect based on address
 
 	// Handler/dispatcher configuration
@@ -35,6 +36,7 @@ func defaultConfig() *Config {
 	communicationMode := getEnvWithDefault("COMMUNICATION_MODE", "grpc")
 	grpcServerAddress := getEnvWithDefault("GRPC_SERVER_ADDRESS", "grpc.dibbla.com:443")
 	serverApiToken := getEnvWithDefault("SERVER_API_TOKEN", "")
+	orgID := getEnvWithDefault("SERVER_ORG_ID", "")
 	
 	// TLS configuration with auto-detection
 	var defaultTLS *bool = nil
@@ -56,6 +58,7 @@ func defaultConfig() *Config {
 		CommunicationMode:          communicationMode,
 		GrpcServerAddress:          grpcServerAddress,
 		ServerApiToken:             serverApiToken,
+		OrgID:                      orgID,
 		GrpcUseTLS:                 defaultTLS,
 		HandlersConcurrency:        handlersConcurrency,
 		IncomingEventsBuffer:       incomingBuffer,
@@ -91,6 +94,14 @@ func WithGrpcServerAddress(address string) Option {
 // WithServerApiToken sets the API token for authentication
 func WithServerApiToken(token string) Option {
 	return func(c *Config) { c.ServerApiToken = token }
+}
+
+// WithOrgID pins function registration to a specific organization. Use this
+// when the API token's owner belongs to multiple orgs; the value is sent as
+// x-org-id gRPC metadata and the platform verifies membership. When empty, the
+// token's default organization is used.
+func WithOrgID(orgID string) Option {
+	return func(c *Config) { c.OrgID = orgID }
 }
 
 // WithGrpcTLS enables or disables TLS for gRPC connections

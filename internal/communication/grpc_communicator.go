@@ -30,7 +30,8 @@ type GrpcCommunicator struct {
 	stream        grpc.BidiStreamingClient[workflowsgrpc.GrpcEventMessage, workflowsgrpc.GrpcEventMessage]
 	serverName    string
 	apiToken      string
-	useTLS        bool // Determined at creation time
+	orgID         string // optional: sent as x-org-id metadata to pin the org
+	useTLS        bool   // Determined at creation time
 
 	// Channel for incoming events
 	incomingEvents chan *types.EventMessage
@@ -71,6 +72,12 @@ func NewGrpcCommunicator(serverAddress, serverName, apiToken string) *GrpcCommun
 		reconnectIntervalSec:   5,
 		healthcheckIntervalSec: 30,
 	}
+}
+
+// SetOrgID sets an optional organization id, sent as x-org-id gRPC metadata so
+// the platform scopes registration to that org (for multi-org token owners).
+func (gc *GrpcCommunicator) SetOrgID(orgID string) {
+	gc.orgID = orgID
 }
 
 // ShouldUseTLS determines if TLS should be used based on the server address
@@ -222,11 +229,15 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 
 	// Create context with authentication metadata
 	streamCtx := gc.ctx
-	if gc.apiToken != "" {
-		md := metadata.New(map[string]string{
-			"authorization": "Bearer " + gc.apiToken,
-		})
-		streamCtx = metadata.NewOutgoingContext(streamCtx, md)
+	if gc.apiToken != "" || gc.orgID != "" {
+		pairs := map[string]string{}
+		if gc.apiToken != "" {
+			pairs["authorization"] = "Bearer " + gc.apiToken
+		}
+		if gc.orgID != "" {
+			pairs["x-org-id"] = gc.orgID
+		}
+		streamCtx = metadata.NewOutgoingContext(streamCtx, metadata.New(pairs))
 	}
 
 	// Create bidirectional stream with authentication metadata

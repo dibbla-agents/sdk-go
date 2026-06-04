@@ -83,9 +83,21 @@ func main() {
 | Variable              | Default              | Description                                    |
 | --------------------- | -------------------- | ---------------------------------------------- |
 | `SERVER_NAME`         | `codex-go-worker`    | Unique identifier for this worker              |
-| `GRPC_SERVER_ADDRESS` | `grpc.dibbla.com:443` | Address of the workflow server                 |
-| `SERVER_API_TOKEN`    | _(empty)_            | Authentication token                           |
+| `GRPC_SERVER_ADDRESS` | `grpc.dibbla.com:443` | Address of the workflow server (the proxy gRPC endpoint) |
+| `SERVER_API_TOKEN`    | _(empty)_            | Your Dibbla API token (`ak_…`, created in the console) |
+| `SERVER_ORG_ID`       | _(empty)_            | Optional: pin registration to a specific org (multi-org token owners) |
 | `GRPC_USE_TLS`        | _(auto-detect)_      | Enable/disable TLS (`true`, `false`, or empty) |
+
+#### Authentication & org scoping
+
+Set `SERVER_API_TOKEN` to a personal API token (`ak_…`) generated in the Dibbla
+console. The connection is authenticated centrally by the proxy against the
+auth-service — the same flow as the rest of the platform — and the functions
+your tool server registers are scoped to your organization.
+
+If your token's account belongs to multiple organizations, set `SERVER_ORG_ID`
+(or `sdk.WithOrgID("org_…")`) to choose which one this tool server registers
+under; otherwise the token's default organization is used.
 
 ### TLS Configuration
 
