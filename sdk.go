@@ -87,6 +87,7 @@ func (s *Server) initializeGlobalState() error {
 		HealthcheckIntervalSec: s.config.GrpcHealthcheckIntervalSec,
 		PingIntervalSec:        s.config.PingIntervalSec,
 		UseTLS:                 s.config.GrpcUseTLS,
+		TLSInsecureSkipVerify:  s.config.GrpcTLSInsecureSkipVerify,
 	}
 
 	globalState, err := state.NewGlobalStateWithMode(commConfig)

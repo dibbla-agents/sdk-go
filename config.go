@@ -15,6 +15,11 @@ type Config struct {
 	ServerApiToken    string // API token for authentication
 	OrgID             string // optional: pin registration to a specific org (multi-org users)
 	GrpcUseTLS        *bool  // nil = auto-detect based on address
+	// GrpcTLSInsecureSkipVerify disables TLS certificate verification. Only
+	// takes effect when TLS is in use. Insecure: keeps the connection encrypted
+	// but does not validate the server certificate. Use only for self-signed or
+	// otherwise untrusted certificates in controlled environments.
+	GrpcTLSInsecureSkipVerify bool
 
 	// Handler/dispatcher configuration
 	HandlersConcurrency  int
@@ -44,6 +49,12 @@ func defaultConfig() *Config {
 		val := (tlsEnv == "true" || tlsEnv == "1")
 		defaultTLS = &val
 	}
+
+	// TLS certificate verification can be skipped via env (insecure)
+	insecureSkipVerify := false
+	if v := os.Getenv("GRPC_TLS_INSECURE_SKIP_VERIFY"); v == "true" || v == "1" {
+		insecureSkipVerify = true
+	}
 	
 	// Defaults mirror current hard-coded behavior
 	handlersConcurrency := 8
@@ -60,6 +71,7 @@ func defaultConfig() *Config {
 		ServerApiToken:             serverApiToken,
 		OrgID:                      orgID,
 		GrpcUseTLS:                 defaultTLS,
+		GrpcTLSInsecureSkipVerify:  insecureSkipVerify,
 		HandlersConcurrency:        handlersConcurrency,
 		IncomingEventsBuffer:       incomingBuffer,
 		GrpcReconnectIntervalSec:   reconnectInterval,
@@ -107,6 +119,18 @@ func WithOrgID(orgID string) Option {
 // WithGrpcTLS enables or disables TLS for gRPC connections
 func WithGrpcTLS(useTLS bool) Option {
 	return func(c *Config) { c.GrpcUseTLS = &useTLS }
+}
+
+// WithGrpcInsecureSkipVerify disables TLS certificate verification for gRPC
+// connections. It only has an effect when TLS is in use (see WithGrpcTLS); the
+// connection stays encrypted but the server certificate is not validated.
+//
+// This is insecure and exposes the connection to man-in-the-middle attacks.
+// Use it only for self-signed or otherwise untrusted certificates in controlled
+// environments (e.g. internal servers with a private CA). Prefer disabling TLS
+// entirely with WithGrpcTLS(false) for plaintext local development.
+func WithGrpcInsecureSkipVerify(skip bool) Option {
+	return func(c *Config) { c.GrpcTLSInsecureSkipVerify = skip }
 }
 
 // WithGrpcMode configures the SDK to use gRPC communication

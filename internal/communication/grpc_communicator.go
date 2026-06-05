@@ -32,6 +32,10 @@ type GrpcCommunicator struct {
 	apiToken      string
 	orgID         string // optional: sent as x-org-id metadata to pin the org
 	useTLS        bool   // Determined at creation time
+	// insecureSkipVerify, when true, disables TLS certificate verification.
+	// Only takes effect when useTLS is true. Insecure: use only for self-signed
+	// or otherwise untrusted certs in controlled environments.
+	insecureSkipVerify bool
 
 	// Channel for incoming events
 	incomingEvents chan *types.EventMessage
@@ -78,6 +82,14 @@ func NewGrpcCommunicator(serverAddress, serverName, apiToken string) *GrpcCommun
 // the platform scopes registration to that org (for multi-org token owners).
 func (gc *GrpcCommunicator) SetOrgID(orgID string) {
 	gc.orgID = orgID
+}
+
+// SetInsecureSkipVerify controls whether TLS certificate verification is
+// skipped. It only has an effect when the connection uses TLS. Skipping
+// verification is insecure and should be reserved for self-signed or otherwise
+// untrusted certificates in controlled environments.
+func (gc *GrpcCommunicator) SetInsecureSkipVerify(skip bool) {
+	gc.insecureSkipVerify = skip
 }
 
 // ShouldUseTLS determines if TLS should be used based on the server address
@@ -184,9 +196,14 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 
 	if gc.useTLS {
 		// Production: Use TLS with system certificates
-		creds := credentials.NewTLS(&tls.Config{})
+		tlsConfig := &tls.Config{InsecureSkipVerify: gc.insecureSkipVerify}
+		creds := credentials.NewTLS(tlsConfig)
 		opts = append(opts, grpc.WithTransportCredentials(creds))
-		log.Printf("Connecting with TLS to %s", gc.serverAddress)
+		if gc.insecureSkipVerify {
+			log.Printf("Connecting with TLS to %s (certificate verification DISABLED)", gc.serverAddress)
+		} else {
+			log.Printf("Connecting with TLS to %s", gc.serverAddress)
+		}
 	} else {
 		// Development: No TLS
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))

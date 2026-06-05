@@ -23,6 +23,9 @@ type CommunicationConfig struct {
 	HealthcheckIntervalSec int
 	PingIntervalSec        int   // Interval for sending ping messages (0 = disabled)
 	UseTLS                 *bool // nil = auto-detect
+	// TLSInsecureSkipVerify disables TLS certificate verification. Only takes
+	// effect when TLS is used. Insecure: use only for self-signed/untrusted certs.
+	TLSInsecureSkipVerify bool
 }
 
 // NewGlobalStateWithMode creates a GlobalState with the specified communication mode
@@ -101,6 +104,7 @@ func setupGrpcMode(gs *GlobalState, config CommunicationConfig) (communication.W
 		useTLS,
 	)
 	grpcCommunicator.SetOrgID(config.OrgID)
+	grpcCommunicator.SetInsecureSkipVerify(config.TLSInsecureSkipVerify)
 
 	// Connect to gRPC server
 	if err := grpcCommunicator.Connect(); err != nil {
