@@ -20,10 +20,11 @@ import (
 
 // Server represents the SDK server instance
 type Server struct {
-	config      *Config
-	globalState *state.GlobalState
-	functions   []FunctionBuilder
-	jobs        []jobs.JobHandler
+	config              *Config
+	globalState         *state.GlobalState
+	functions           []FunctionBuilder
+	jobs                []jobs.JobHandler
+	capabilityProviders []types.CapabilityProviderDefinition
 }
 
 // New creates a new SDK server instance with the provided options
@@ -182,8 +183,9 @@ func (s *Server) registerServer() {
 		CorrelationID:  "startup",
 	}
 
-	// Send server name and function list
+	// Send server name, function list, and capability providers (if any)
 	handlers.HandleListFunctions(s.globalState, eventState)
+	handlers.HandleListCapabilityProviders(s.globalState, eventState)
 	log.Printf("Server '%s' registered with workflow server", s.globalState.ServerName)
 }
 
@@ -200,6 +202,7 @@ func (s *Server) sendStartupBroadcast() {
 		"startup",                // correlationID
 	)
 	handlers.HandleListFunctions(s.globalState, startupEventState)
+	handlers.HandleListCapabilityProviders(s.globalState, startupEventState)
 	log.Println("Startup function list broadcast sent")
 }
 
@@ -251,6 +254,14 @@ func (s *Server) Start() error {
 
 	// Register and publish functions
 	s.registerAndPublishFunctions()
+
+	// Stamp registered capability providers with the server name and expose
+	// them to the announce handlers (registerServer, request_server_info,
+	// reconnect). Done once before handlers activate; read-only afterwards.
+	for i := range s.capabilityProviders {
+		s.capabilityProviders[i].Server = s.globalState.ServerName
+	}
+	s.globalState.CapabilityProviders = s.capabilityProviders
 
 	// Register server with workflow server
 	s.registerServer()

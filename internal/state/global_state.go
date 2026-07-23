@@ -9,6 +9,7 @@ import (
 	"github.com/dibbla-agents/sdk-go/internal/maps"
 	"github.com/dibbla-agents/sdk-go/internal/oauth"
 	"github.com/dibbla-agents/sdk-go/internal/rpc"
+	"github.com/dibbla-agents/sdk-go/internal/types"
 )
 
 type GlobalState struct {
@@ -22,4 +23,8 @@ type GlobalState struct {
 	ExecutionState   *maps.SafeFunctionMap[string, any]
 	WorkflowComm     communication.WorkflowCommunicator
 	Dispatcher       *dispatcher.Dispatcher
+	// CapabilityProviders holds the provider definitions announced to the
+	// workflow server alongside functions. Populated once during
+	// Server.Start() before handlers activate; read-only afterwards.
+	CapabilityProviders []types.CapabilityProviderDefinition
 }

@@ -81,6 +81,15 @@ func HandleIncomingWorkflow(gs *state.GlobalState) {
 		fs := state.NewEventState(message.Server, message.Function, message.Version, message.Node, message.Workflow, message.Run, gs.ServerName, message.CorrelationID)
 		handleServerName(gs, fs)
 		HandleListFunctions(gs, fs)
+		HandleListCapabilityProviders(gs, fs)
+	})
+
+	// Provider invocation route — the request/response contract is exercised
+	// by the tool_search execution slice of DIB-131; until then any request
+	// gets an explicit error back instead of a silent timeout.
+	gs.Dispatcher.Register(types.EventCapabilityProviderRequest, func(message *types.EventMessage) {
+		fs := state.NewEventState(message.Server, message.Function, message.Version, message.Node, message.Workflow, message.Run, gs.ServerName, message.CorrelationID)
+		sendErrorEvent(gs, fs, "capability provider execution is not supported by this SDK version")
 	})
 
 	// Read from communicator and dispatch
@@ -123,6 +132,7 @@ func isWorkflowOptionalEvent(event string) bool {
 		types.EventRequestServerInfo,
 		types.EventRequestServerName,
 		types.EventRequestListFunctions,
+		types.EventCapabilityProviderRequest,
 		types.EventJobTrigger:
 		return true
 	default:

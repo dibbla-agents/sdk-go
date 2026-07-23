@@ -55,6 +55,11 @@ const (
 	EventResponseServerName    = "response_server_name"
 	EventRequestServerInfo     = "request_server_info"
 
+	// Capability providers (DIB-131) — worker → server registration and
+	// server → worker provider invocation
+	EventResponseListCapabilityProviders = "response_list_capability_providers"
+	EventCapabilityProviderRequest       = "capability_provider_request"
+
 	// OAuth events - Request access tokens for external services (Google, Microsoft, GitHub)
 	EventOAuthTokenRequest   = "oauth_token_request"
 	EventOAuthTokenResponse  = "oauth_token_response"
