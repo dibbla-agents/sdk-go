@@ -33,6 +33,13 @@ func main() {
 	server.RegisterFunction(examples.ReadGoogleSheetsFunction())
 	server.RegisterFunction(examples.UpdateGoogleSheetsFunction())
 
+	// Capability provider example (DIB-152): a custom tool_search selection
+	// provider. Registered into the provider registry, never the function
+	// list; used only when a workflow binds it to an agent node capability.
+	if err := server.RegisterCapabilityProvider(examples.DeterministicToolSearchProvider()); err != nil {
+		log.Fatal("Failed to register capability provider:", err)
+	}
+
 	// Start server (this will handle all initialization and block forever)
 	log.Println("Starting server with SDK...")
 	if err := server.Start(); err != nil {

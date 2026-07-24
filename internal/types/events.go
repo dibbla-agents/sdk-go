@@ -59,6 +59,11 @@ const (
 	// server → worker provider invocation
 	EventResponseListCapabilityProviders = "response_list_capability_providers"
 	EventCapabilityProviderRequest       = "capability_provider_request"
+	EventCapabilityProviderResponse      = "capability_provider_response"
+	// EventCapabilityCatalog is the one-way catalog pre-sync (DIB-152): the
+	// engine pushes the full tool_search stub set at run start so providers
+	// that pre-index (e.g. embeddings) can do so. No reply is expected.
+	EventCapabilityCatalog = "capability_catalog"
 
 	// OAuth events - Request access tokens for external services (Google, Microsoft, GitHub)
 	EventOAuthTokenRequest   = "oauth_token_request"

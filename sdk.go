@@ -25,6 +25,7 @@ type Server struct {
 	functions           []FunctionBuilder
 	jobs                []jobs.JobHandler
 	capabilityProviders []types.CapabilityProviderDefinition
+	capabilityHandlers  map[string]state.CapabilityProviderHandler
 }
 
 // New creates a new SDK server instance with the provided options
@@ -262,6 +263,7 @@ func (s *Server) Start() error {
 		s.capabilityProviders[i].Server = s.globalState.ServerName
 	}
 	s.globalState.CapabilityProviders = s.capabilityProviders
+	s.globalState.CapabilityProviderHandlers = s.capabilityHandlers
 
 	// Register server with workflow server
 	s.registerServer()
