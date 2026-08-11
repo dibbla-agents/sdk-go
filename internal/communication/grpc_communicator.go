@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,15 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+)
+
+// Reconnection defaults. maxBackoff also serves as the holding pattern for
+// non-retryable errors (e.g. an invalid API token): the client keeps retrying
+// at this slow cadence so it self-heals once the cause is fixed, without
+// hammering the server in the meantime.
+const (
+	defaultMaxBackoff        = 5 * time.Minute
+	defaultHealthyResetAfter = 60 * time.Second
 )
 
 // GrpcCommunicator implements WorkflowCommunicator using gRPC
@@ -40,16 +50,18 @@ type GrpcCommunicator struct {
 	// Channel for incoming events
 	incomingEvents chan *types.EventMessage
 
-	// Context for cancellation
+	// Context for cancellation (process lifetime)
 	ctx    context.Context
 	cancel context.CancelFunc
 
 	// Synchronization
 	mu            sync.RWMutex
 	connected     bool
-	reconnectCh   chan struct{}
-	connectedCh   chan struct{} // Closed on first successful connection
+	connCancel    context.CancelFunc // cancels the current connection's context
+	reconnectCh   chan error         // signals connection loss with its cause (buffered 1, non-blocking sends)
+	connectedCh   chan struct{}      // Closed on first successful connection
 	connectedOnce sync.Once
+	wg            sync.WaitGroup // tracks run() and per-connection goroutines
 
 	// Reconnect callback - called when connection is re-established after a disconnect
 	onReconnect func()
@@ -58,6 +70,13 @@ type GrpcCommunicator struct {
 	reconnectIntervalSec   int
 	healthcheckIntervalSec int
 	pingIntervalSec        int // 0 = disabled
+
+	// Backoff tuning (overridable in tests)
+	maxBackoff        time.Duration
+	healthyResetAfter time.Duration
+
+	// Extra dial options, used by tests to dial in-memory listeners.
+	dialOpts []grpc.DialOption
 }
 
 // NewGrpcCommunicator creates a new gRPC-based communicator
@@ -71,10 +90,12 @@ func NewGrpcCommunicator(serverAddress, serverName, apiToken string) *GrpcCommun
 		incomingEvents:         make(chan *types.EventMessage, 100), // Buffered channel
 		ctx:                    ctx,
 		cancel:                 cancel,
-		reconnectCh:            make(chan struct{}, 1),
+		reconnectCh:            make(chan error, 1),
 		connectedCh:            make(chan struct{}),
 		reconnectIntervalSec:   5,
 		healthcheckIntervalSec: 30,
+		maxBackoff:             defaultMaxBackoff,
+		healthyResetAfter:      defaultHealthyResetAfter,
 	}
 }
 
@@ -133,46 +154,152 @@ func NewGrpcCommunicatorWithTLS(serverAddress, serverName, apiToken string, inco
 		incomingEvents:         make(chan *types.EventMessage, incomingBuffer),
 		ctx:                    ctx,
 		cancel:                 cancel,
-		reconnectCh:            make(chan struct{}, 1),
+		reconnectCh:            make(chan error, 1),
 		connectedCh:            make(chan struct{}),
 		reconnectIntervalSec:   reconnectIntervalSec,
 		healthcheckIntervalSec: healthcheckIntervalSec,
 		pingIntervalSec:        pingIntervalSec,
+		maxBackoff:             defaultMaxBackoff,
+		healthyResetAfter:      defaultHealthyResetAfter,
 	}
 }
 
-// Connect starts the connection process and retries until successful
+// Connect starts the connection supervisor in the background. Exactly one
+// supervisor goroutine exists for the life of the communicator; it owns all
+// connect/reconnect decisions.
 func (gc *GrpcCommunicator) Connect() error {
-	// Start connection attempts in background
-	go gc.connectionLoop()
+	gc.wg.Add(1)
+	go gc.run()
 
-	log.Printf("Started gRPC connection attempts to %s (will retry every 5 seconds until successful)", gc.serverAddress)
+	log.Printf("Started gRPC connection attempts to %s (retrying with backoff, %ds initial interval)", gc.serverAddress, gc.reconnectIntervalSec)
 	return nil
 }
 
-// connectionLoop continuously attempts to connect with 5-second intervals
-func (gc *GrpcCommunicator) connectionLoop() {
+// run is the connection supervisor: connect, watch the connection until it
+// dies, tear it down, wait with backoff, repeat. It is the ONLY goroutine that
+// dials or tears down connections, which guarantees a single live connection
+// and no goroutine accumulation across reconnects.
+func (gc *GrpcCommunicator) run() {
+	defer gc.wg.Done()
+	defer gc.disconnect()
+
+	initial := time.Duration(gc.reconnectIntervalSec) * time.Second
+	backoff := initial
+
 	for {
-		select {
-		case <-gc.ctx.Done():
+		if gc.ctx.Err() != nil {
 			return
-		default:
 		}
 
 		if gc.attemptConnection() {
-			// Successfully connected, start monitoring
-			go gc.connectionMonitor()
-			return
+			connectedAt := time.Now()
+			cause := gc.superviseConnection()
+			gc.disconnect()
+			gc.drainReconnectSignal() // discard stale signals from the connection just torn down
+
+			if gc.ctx.Err() != nil {
+				return
+			}
+
+			// A connection that stayed healthy for a while earns a backoff
+			// reset. A connection that died immediately (e.g. rejected token)
+			// must NOT reset it, or a connect-then-die loop would spin.
+			if time.Since(connectedAt) >= gc.healthyResetAfter {
+				backoff = initial
+			}
+
+			if isNonRetryable(cause) {
+				// Cannot succeed by retrying (invalid/expired token, revoked
+				// access). Go straight to the slowest cadence and say why.
+				backoff = gc.maxBackoff
+				if st, ok := status.FromError(cause); ok && st.Code() == codes.Unauthenticated {
+					log.Printf("❌ Authentication failed: Invalid or expired API token. Retrying in %v. Error: %v", backoff, st.Message())
+				} else {
+					log.Printf("❌ Non-retryable error on stream: %v. Retrying in %v", cause, backoff)
+				}
+			} else {
+				log.Printf("Connection lost (%v), reconnecting in %v", cause, backoff)
+			}
 		}
 
-		// Wait before next attempt
+		// Wait before the next attempt — on EVERY path, including
+		// connected-then-died. Jitter spreads simultaneous reconnects across
+		// the fleet (e.g. after a server restart) to avoid thundering herds.
 		select {
 		case <-gc.ctx.Done():
 			return
-		case <-time.After(time.Duration(gc.reconnectIntervalSec) * time.Second):
-			continue
+		case <-time.After(jitter(backoff)):
+		}
+
+		backoff *= 2
+		if backoff > gc.maxBackoff {
+			backoff = gc.maxBackoff
 		}
 	}
+}
+
+// superviseConnection blocks while the current connection is alive. It returns
+// the cause of the connection's death: a stream/send error, or a synthetic
+// error from the health checker. Returns gc.ctx.Err() on shutdown.
+func (gc *GrpcCommunicator) superviseConnection() error {
+	ticker := time.NewTicker(time.Duration(gc.healthcheckIntervalSec) * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-gc.ctx.Done():
+			return gc.ctx.Err()
+		case err := <-gc.reconnectCh:
+			return err
+		case <-ticker.C:
+			if err := gc.checkConnectionHealth(); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// drainReconnectSignal discards a pending reconnect signal, if any. Called
+// after disconnect() and before the next attempt, so a late signal from the
+// old connection cannot be mistaken for one from the new connection.
+func (gc *GrpcCommunicator) drainReconnectSignal() {
+	select {
+	case <-gc.reconnectCh:
+	default:
+	}
+}
+
+// signalDisconnect notifies the supervisor that the connection died, with the
+// cause. Non-blocking: if a signal is already pending, the first cause wins.
+func (gc *GrpcCommunicator) signalDisconnect(cause error) {
+	select {
+	case gc.reconnectCh <- cause:
+	default:
+	}
+}
+
+// isNonRetryable reports whether an error can never be fixed by reconnecting
+// (authentication/authorization failures). These get the slowest retry cadence.
+func isNonRetryable(err error) bool {
+	st, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	switch st.Code() {
+	case codes.Unauthenticated, codes.PermissionDenied:
+		return true
+	}
+	return false
+}
+
+// jitter returns a random duration in [d/2, d] to spread reconnects across a
+// fleet of workers.
+func jitter(d time.Duration) time.Duration {
+	if d <= 1 {
+		return d
+	}
+	half := d / 2
+	return half + rand.N(half)
 }
 
 // attemptConnection tries to establish a single connection
@@ -216,6 +343,7 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 	// (e.g. split-DNS / Tailscale setups where Go sends the query to a LAN
 	// nameserver that drops it). The A record still resolves normally.
 	opts = append(opts, grpc.WithDisableServiceConfig())
+	opts = append(opts, gc.dialOpts...)
 
 	conn, err := grpc.NewClient(gc.serverAddress, opts...)
 	if err != nil {
@@ -223,36 +351,14 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 		return false
 	}
 
-	// Test connection with a short timeout
-	ctx, cancel := context.WithTimeout(gc.ctx, 5*time.Second)
-	defer cancel()
-
-	// Wait for connection to be ready or idle (idle is acceptable since RPCs will trigger connection)
-	state := conn.GetState()
-	for state != connectivity.Ready && state != connectivity.Idle {
-		log.Printf("connection state: %v", state)
-		if !conn.WaitForStateChange(ctx, state) {
-			conn.Close()
-			log.Printf("Connection timeout to %s", gc.serverAddress)
-			return false
-		}
-
-		// Check if context was cancelled
-		select {
-		case <-ctx.Done():
-			conn.Close()
-			log.Printf("Connection attempt cancelled")
-			return false
-		default:
-		}
-
-		state = conn.GetState()
-	}
-
 	gc.client = workflowsgrpc.NewEventServiceClient(conn)
 
-	// Create context with authentication metadata
-	streamCtx := gc.ctx
+	// Per-connection context: cancelled by disconnect(), which deterministically
+	// ends this connection's stream, receive goroutine and ping loop.
+	connCtx, connCancel := context.WithCancel(gc.ctx)
+
+	// Attach authentication metadata
+	streamCtx := connCtx
 	if gc.apiToken != "" || gc.orgID != "" {
 		pairs := map[string]string{}
 		if gc.apiToken != "" {
@@ -267,6 +373,7 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 	// Create bidirectional stream with authentication metadata
 	stream, err := gc.client.Events(streamCtx)
 	if err != nil {
+		connCancel()
 		conn.Close()
 		// Check if this is an authentication error
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unauthenticated {
@@ -290,6 +397,7 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 	}
 
 	if err := stream.Send(registrationMsg); err != nil {
+		connCancel()
 		conn.Close()
 		log.Printf("Failed to register with server: %v", err)
 		return false
@@ -298,6 +406,7 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 	// Success - store connection details
 	gc.conn = conn
 	gc.stream = stream
+	gc.connCancel = connCancel
 	gc.connected = true
 
 	// Signal first connection (for WaitForConnection)
@@ -308,12 +417,14 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 		isReconnect = false
 	})
 
-	// Start message handler
-	go gc.receiveMessages()
+	// Start per-connection goroutines, bound to this connection's context and
+	// stream so they exit when the connection is torn down.
+	gc.wg.Add(1)
+	go gc.receiveMessages(connCtx, stream)
 
-	// Start ping loop if enabled
 	if gc.pingIntervalSec > 0 {
-		go gc.pingLoop()
+		gc.wg.Add(1)
+		go gc.pingLoop(connCtx)
 	}
 
 	log.Printf("✅ gRPC client successfully connected to workflow server at %s", gc.serverAddress)
@@ -345,10 +456,7 @@ func (gc *GrpcCommunicator) SendEvent(event *types.EventMessage) error {
 	if err := gc.stream.Send(grpcMsg); err != nil {
 		log.Printf("Failed to send event via gRPC: %v", err)
 		// Trigger reconnection
-		select {
-		case gc.reconnectCh <- struct{}{}:
-		default:
-		}
+		gc.signalDisconnect(fmt.Errorf("send failed: %w", err))
 		return fmt.Errorf("failed to send event: %w", err)
 	}
 
@@ -364,8 +472,11 @@ func (gc *GrpcCommunicator) ReceiveEvents() <-chan *types.EventMessage {
 	return gc.incomingEvents
 }
 
-// receiveMessages handles incoming messages from the server
-func (gc *GrpcCommunicator) receiveMessages() {
+// receiveMessages handles incoming messages from the given stream. It is bound
+// to a single connection: it exits when the stream errors or connCtx is
+// cancelled, signalling the supervisor with the cause.
+func (gc *GrpcCommunicator) receiveMessages(connCtx context.Context, stream grpc.BidiStreamingClient[workflowsgrpc.GrpcEventMessage, workflowsgrpc.GrpcEventMessage]) {
+	defer gc.wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("Panic in receiveMessages: %v", r)
@@ -373,35 +484,18 @@ func (gc *GrpcCommunicator) receiveMessages() {
 	}()
 
 	for {
-		select {
-		case <-gc.ctx.Done():
-			return
-		default:
-		}
-
-		gc.mu.RLock()
-		stream := gc.stream
-		connected := gc.connected
-		gc.mu.RUnlock()
-
-		if !connected || stream == nil {
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
 		msg, err := stream.Recv()
 		if err != nil {
+			// Deliberate teardown (disconnect() or Close()) — exit silently.
+			if connCtx.Err() != nil {
+				return
+			}
 			if err == io.EOF {
 				log.Println("gRPC stream closed by server")
 			} else {
 				log.Printf("Error receiving gRPC message: %v", err)
 			}
-
-			// Trigger reconnection
-			select {
-			case gc.reconnectCh <- struct{}{}:
-			default:
-			}
+			gc.signalDisconnect(err)
 			return
 		}
 
@@ -425,66 +519,36 @@ func (gc *GrpcCommunicator) receiveMessages() {
 	}
 }
 
-// connectionMonitor monitors connection health and handles reconnection
-func (gc *GrpcCommunicator) connectionMonitor() {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("Panic in connectionMonitor: %v", r)
-		}
-	}()
-
-	ticker := time.NewTicker(time.Duration(gc.healthcheckIntervalSec) * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-gc.ctx.Done():
-			return
-		case <-gc.reconnectCh:
-			gc.handleReconnection()
-		case <-ticker.C:
-			gc.checkConnectionHealth()
-		}
-	}
-}
-
-// checkConnectionHealth checks if the connection is still healthy
-func (gc *GrpcCommunicator) checkConnectionHealth() {
+// checkConnectionHealth returns an error if the connection is unhealthy.
+func (gc *GrpcCommunicator) checkConnectionHealth() error {
 	gc.mu.RLock()
 	conn := gc.conn
 	connected := gc.connected
 	gc.mu.RUnlock()
 
 	if !connected || conn == nil {
-		return
+		return nil
 	}
 
 	state := conn.GetState()
 	if state == connectivity.TransientFailure || state == connectivity.Shutdown {
-		log.Printf("Connection unhealthy (state: %v), triggering reconnection", state)
-		select {
-		case gc.reconnectCh <- struct{}{}:
-		default:
-		}
+		return fmt.Errorf("connection unhealthy (state: %v)", state)
 	}
+	return nil
 }
 
-// handleReconnection handles reconnection logic
-func (gc *GrpcCommunicator) handleReconnection() {
-	log.Println("Connection lost, attempting to reconnect...")
-
-	gc.disconnect()
-
-	// Start the connection loop again (it will retry every 5 seconds)
-	go gc.connectionLoop()
-}
-
-// disconnect closes the current connection
+// disconnect closes the current connection and cancels its context, which
+// stops the connection's receive goroutine and ping loop.
 func (gc *GrpcCommunicator) disconnect() {
 	gc.mu.Lock()
 	defer gc.mu.Unlock()
 
 	gc.connected = false
+
+	if gc.connCancel != nil {
+		gc.connCancel()
+		gc.connCancel = nil
+	}
 
 	if gc.stream != nil {
 		gc.stream.CloseSend()
@@ -501,6 +565,9 @@ func (gc *GrpcCommunicator) disconnect() {
 func (gc *GrpcCommunicator) Close() error {
 	gc.cancel()
 	gc.disconnect()
+	// Wait for the supervisor and all connection goroutines to exit before
+	// closing incomingEvents, so no goroutine can send on a closed channel.
+	gc.wg.Wait()
 	close(gc.incomingEvents)
 
 	log.Println("gRPC client closed")
@@ -534,18 +601,17 @@ func (gc *GrpcCommunicator) SetOnReconnect(callback func()) {
 	gc.onReconnect = callback
 }
 
-// pingLoop sends ping messages at the configured interval
-func (gc *GrpcCommunicator) pingLoop() {
-	if gc.pingIntervalSec <= 0 {
-		return // Ping disabled
-	}
+// pingLoop sends ping messages at the configured interval while the connection
+// that started it is alive.
+func (gc *GrpcCommunicator) pingLoop(connCtx context.Context) {
+	defer gc.wg.Done()
 
 	ticker := time.NewTicker(time.Duration(gc.pingIntervalSec) * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-gc.ctx.Done():
+		case <-connCtx.Done():
 			return
 		case <-ticker.C:
 			gc.sendPing()
@@ -555,14 +621,6 @@ func (gc *GrpcCommunicator) pingLoop() {
 
 // sendPing sends a ping message to the workflow server
 func (gc *GrpcCommunicator) sendPing() {
-	gc.mu.RLock()
-	connected := gc.connected
-	gc.mu.RUnlock()
-
-	if !connected {
-		return
-	}
-
 	pingEvent := &types.EventMessage{
 		Server:        gc.serverName,
 		Event:         types.EventPing,
