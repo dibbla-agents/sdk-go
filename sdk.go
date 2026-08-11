@@ -315,9 +315,12 @@ func (s *Server) registerJobs() {
 	}
 }
 
-// registerJobTriggerHandler registers the handler for incoming job triggers
+// registerJobTriggerHandler registers the handler for incoming job triggers.
+// Registered direct: the handler only parses metadata and spawns the job
+// goroutine, so it never blocks, and triggers must not queue behind (or be
+// dropped by) a saturated function-request pool.
 func (s *Server) registerJobTriggerHandler() {
-	s.globalState.Dispatcher.Register(types.EventJobTrigger, s.handleJobTrigger)
+	s.globalState.Dispatcher.RegisterDirect(types.EventJobTrigger, s.handleJobTrigger)
 }
 
 // handleJobTrigger processes incoming job_trigger events from the server
