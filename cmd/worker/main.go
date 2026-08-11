@@ -40,6 +40,12 @@ func main() {
 		log.Fatal("Failed to register capability provider:", err)
 	}
 
+	// Capability provider example (DIB-154): a custom memory policy provider
+	// used when a workflow binds it to an agent node's history_policy: custom.
+	if err := server.RegisterCapabilityProvider(examples.MarkerMemoryProvider()); err != nil {
+		log.Fatal("Failed to register capability provider:", err)
+	}
+
 	// Start server (this will handle all initialization and block forever)
 	log.Println("Starting server with SDK...")
 	if err := server.Start(); err != nil {

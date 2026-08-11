@@ -28,6 +28,29 @@ type CapabilityProvider interface {
 // dispatches tools.
 type ProviderStub = types.ProviderStub
 
+// Memory-seat turn/part shapes a MemoryProvider.Transform handler works with
+// (DIB-154). They mirror the platform's v2 ChatBlob model exactly, so a turn
+// returned unchanged round-trips byte-for-byte. Construct a text part with
+// Part{Type: PartTypeText, Text: &TextPart{Text: "..."}}.
+type (
+	Turn           = types.Turn
+	Part           = types.Part
+	PartType       = types.PartType
+	TextPart       = types.TextPart
+	ToolCallPart   = types.ToolCallPart
+	AttachmentPart = types.AttachmentPart
+	ReasoningPart  = types.ReasoningPart
+	ThreadMeta     = types.ThreadMeta
+)
+
+// Part type discriminants, re-exported for handler ergonomics.
+const (
+	PartTypeText       = types.PartTypeText
+	PartTypeToolCall   = types.PartTypeToolCall
+	PartTypeAttachment = types.PartTypeAttachment
+	PartTypeReasoning  = types.PartTypeReasoning
+)
+
 // ToolSearchProvider registers a custom tool_search implementation: it
 // replaces the platform's built-in candidate selection for agent nodes that
 // bind it. Providers own selection, never sourcing — the tool pool itself is
@@ -114,20 +137,91 @@ func (p ToolSearchProvider) definition() types.CapabilityProviderDefinition {
 }
 
 // MemoryProvider registers a custom memory policy implementation: it replaces
-// the platform's built-in conversation replay policy for agent nodes that
-// bind it (history_policy: custom). The platform keeps blob custody; the
-// provider transforms turns-in to turns-out under a token budget.
+// the platform's built-in conversation replay policy for agent nodes that bind
+// it (history_policy: custom). The platform keeps blob custody; the provider
+// transforms turns-in to turns-out under a token budget.
 //
-// The transform handler contract lands with the memory execution slice of
-// DIB-131; registering the provider makes it visible for binding.
+// Data boundary: unlike tool_search, the memory seat carries FULL conversation
+// content — user/assistant text, tool args and results, reasoning — to the
+// provider's server. Binding a memory provider therefore sends a thread's
+// history off-platform to that (org-owned) server, the same trust boundary as
+// any worker function but a larger payload. The platform keeps blob custody:
+// the turns you return are injection-only for that one run and are never
+// written back, so a provider cannot corrupt or persist over the stored blob.
 type MemoryProvider struct {
 	Name        string
 	Description string
 	Version     string
+	// Transform is the memory handler (DIB-154). The engine calls it once per
+	// run, before the model turn, with:
+	//
+	//   currentMessage — the user message being answered this round. Provided so
+	//                    you can do query-conditioned retrieval (select the
+	//                    history relevant to what was just asked). It is NOT one
+	//                    of turns, and you do NOT return it — the engine always
+	//                    appends the real user message after your history.
+	//   turns          — the thread's stored turns in chronological order, full
+	//                    v2 detail. This is the entire history the platform
+	//                    holds; you select/transform, you do not fetch more.
+	//   tokenBudget    — an ENFORCED token ceiling your returned history must stay
+	//                    under (a generous share of the model's context window,
+	//                    leaving room for the system prompt, tools, message, and
+	//                    response). It is NOT a strategy the platform imposes — you
+	//                    decide how to fill 0..budget. The engine does not truncate
+	//                    your output; it REJECTS a return that exceeds the ceiling
+	//                    (or an absolute byte cap), failing the node. Stay under it.
+	//   meta           — thread id and turn count.
+	//
+	// Return the turns to inject, in order. You may drop, reorder, summarize, or
+	// prepend turns freely; every returned turn must carry a "user"/"assistant"
+	// role and parts with known types, or the engine fails the node. Returning
+	// an empty slice injects no history. Returning an error — or a return that
+	// exceeds the token/byte guardrails — fails the node fail-fast; there is no
+	// built-in fallback for history_policy: custom. Leave nil to register the
+	// provider for binding without a live handler yet (a call then replies with
+	// an explicit "not supported" error).
+	Transform func(currentMessage string, turns []Turn, tokenBudget int, meta ThreadMeta) ([]Turn, error)
+	// MaxHistoryFraction optionally declares the share of the model's context
+	// window your returned history may occupy (DIB-154), e.g. 0.5 for half.
+	// The platform clamps it to a hard maximum (you may tune down freely, up
+	// only to that cap) and enforces the resulting token ceiling — the
+	// tokenBudget passed to Transform already reflects your clamped choice. Leave
+	// 0 to accept the platform default. This tunes the token ceiling ONLY; it
+	// never lifts the absolute byte cap, which is platform-owned and non-tunable.
+	MaxHistoryFraction float64
 	// ExtraInputsSchema / ExtraOutputsSchema optionally declare additional
 	// node ports (JSON schema) surfaced when this provider is bound.
 	ExtraInputsSchema  json.RawMessage
 	ExtraOutputsSchema json.RawMessage
+}
+
+// handler builds the generic invoke closure the dispatcher calls for a
+// capability_provider_request targeting this memory provider. Returns nil when
+// no Transform handler is declared, so the dispatcher can reply "not supported".
+func (p MemoryProvider) handler() state.CapabilityProviderHandler {
+	if p.Transform == nil {
+		return nil
+	}
+	return func(reqPayload *[]byte) (*[]byte, error) {
+		var req types.MemoryTransformRequest
+		if reqPayload != nil {
+			if err := json.Unmarshal(*reqPayload, &req); err != nil {
+				return nil, fmt.Errorf("memory provider request decode failed: %w", err)
+			}
+		}
+		turns, err := p.Transform(req.CurrentMessage, req.Turns, req.TokenBudget, req.ThreadMeta)
+		var resp types.MemoryTransformResponse
+		if err != nil {
+			resp.Error = err.Error()
+		} else {
+			resp.Turns = turns
+		}
+		out, mErr := json.Marshal(resp)
+		if mErr != nil {
+			return nil, fmt.Errorf("memory provider response encode failed: %w", mErr)
+		}
+		return &out, nil
+	}
 }
 
 func (p MemoryProvider) definition() types.CapabilityProviderDefinition {
@@ -139,6 +233,7 @@ func (p MemoryProvider) definition() types.CapabilityProviderDefinition {
 		ContractVersion:    1,
 		ExtraInputsSchema:  p.ExtraInputsSchema,
 		ExtraOutputsSchema: p.ExtraOutputsSchema,
+		MaxHistoryFraction: p.MaxHistoryFraction,
 	}
 }
 
@@ -179,8 +274,9 @@ func (s *Server) RegisterCapabilityProvider(p CapabilityProvider) error {
 }
 
 // capabilityHandlerProvider is implemented by seat structs that carry a live
-// invoke handler (currently ToolSearchProvider.Select). MemoryProvider does
-// not implement it yet — its handler contract lands with the memory slice.
+// invoke handler: ToolSearchProvider.Select and MemoryProvider.Transform. A
+// provider registered with a nil handler still appears for binding; a call to
+// it replies with an explicit "not supported" error.
 type capabilityHandlerProvider interface {
 	handler() state.CapabilityProviderHandler
 }
