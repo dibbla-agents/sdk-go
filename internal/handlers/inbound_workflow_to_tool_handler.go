@@ -27,57 +27,57 @@ func HandleIncomingWorkflow(gs *state.GlobalState) {
 		sendFunctionResponse(gs, fs, outputs)
 	})
 
-	gs.Dispatcher.Register(types.EventFunctionResponse, func(message *types.EventMessage) {
+	gs.Dispatcher.RegisterDirect(types.EventFunctionResponse, func(message *types.EventMessage) {
 		gs.RpcClient.HandleCallResponse(*message)
 	})
 
-	gs.Dispatcher.Register(types.EventCacheGetResponse, func(message *types.EventMessage) {
+	gs.Dispatcher.RegisterDirect(types.EventCacheGetResponse, func(message *types.EventMessage) {
 		if gs.GrpcCache != nil {
 			gs.GrpcCache.HandleResponse(*message)
 		}
 	})
-	gs.Dispatcher.Register(types.EventCacheSetResponse, func(message *types.EventMessage) {
+	gs.Dispatcher.RegisterDirect(types.EventCacheSetResponse, func(message *types.EventMessage) {
 		if gs.GrpcCache != nil {
 			gs.GrpcCache.HandleResponse(*message)
 		}
 	})
 
-	gs.Dispatcher.Register(types.EventStoreGetResponse, func(message *types.EventMessage) {
+	gs.Dispatcher.RegisterDirect(types.EventStoreGetResponse, func(message *types.EventMessage) {
 		if gs.GrpcStore != nil {
 			gs.GrpcStore.HandleResponse(*message)
 		}
 	})
-	gs.Dispatcher.Register(types.EventStoreSetResponse, func(message *types.EventMessage) {
+	gs.Dispatcher.RegisterDirect(types.EventStoreSetResponse, func(message *types.EventMessage) {
 		if gs.GrpcStore != nil {
 			gs.GrpcStore.HandleResponse(*message)
 		}
 	})
 
-	gs.Dispatcher.Register(types.EventOAuthTokenResponse, func(message *types.EventMessage) {
+	gs.Dispatcher.RegisterDirect(types.EventOAuthTokenResponse, func(message *types.EventMessage) {
 		if gs.OAuth != nil {
 			gs.OAuth.HandleResponse(*message)
 		}
 	})
-	gs.Dispatcher.Register(types.EventOAuthStatusResponse, func(message *types.EventMessage) {
+	gs.Dispatcher.RegisterDirect(types.EventOAuthStatusResponse, func(message *types.EventMessage) {
 		if gs.OAuth != nil {
 			gs.OAuth.HandleResponse(*message)
 		}
 	})
-	gs.Dispatcher.Register(types.EventOAuthError, func(message *types.EventMessage) {
+	gs.Dispatcher.RegisterDirect(types.EventOAuthError, func(message *types.EventMessage) {
 		if gs.OAuth != nil {
 			gs.OAuth.HandleResponse(*message)
 		}
 	})
 
-	gs.Dispatcher.Register(types.EventRequestListFunctions, func(message *types.EventMessage) {
+	gs.Dispatcher.RegisterDirect(types.EventRequestListFunctions, func(message *types.EventMessage) {
 		fs := state.NewEventState(message.Server, message.Function, message.Version, message.Node, message.Workflow, message.Run, gs.ServerName, message.CorrelationID)
 		HandleListFunctions(gs, fs)
 	})
-	gs.Dispatcher.Register(types.EventRequestServerName, func(message *types.EventMessage) {
+	gs.Dispatcher.RegisterDirect(types.EventRequestServerName, func(message *types.EventMessage) {
 		fs := state.NewEventState(message.Server, message.Function, message.Version, message.Node, message.Workflow, message.Run, gs.ServerName, message.CorrelationID)
 		handleServerName(gs, fs)
 	})
-	gs.Dispatcher.Register(types.EventRequestServerInfo, func(message *types.EventMessage) {
+	gs.Dispatcher.RegisterDirect(types.EventRequestServerInfo, func(message *types.EventMessage) {
 		fs := state.NewEventState(message.Server, message.Function, message.Version, message.Node, message.Workflow, message.Run, gs.ServerName, message.CorrelationID)
 		handleServerName(gs, fs)
 		HandleListFunctions(gs, fs)
@@ -95,7 +95,18 @@ func HandleIncomingWorkflow(gs *state.GlobalState) {
 			log.Println("Workflow is empty, skipping")
 			continue
 		}
-		gs.Dispatcher.Dispatch(msg)
+		if !gs.Dispatcher.Dispatch(msg) {
+			// Worker pool queue is full. Dropping here instead of blocking
+			// keeps this loop draining incomingEvents, so responses and
+			// control events (which dispatch direct) still get through and
+			// parked handlers can complete and free the pool (FAT-19).
+			log.Printf("Dispatcher queue full, dropping event: %s (workflow: %s)", msg.Event, msg.Workflow)
+			if msg.Event == types.EventFunctionRequest {
+				// Fail the caller fast instead of letting it wait out its timeout.
+				fs := state.NewEventState(msg.Server, msg.Function, msg.Version, msg.Node, msg.Workflow, msg.Run, gs.ServerName, msg.CorrelationID)
+				sendErrorEvent(gs, fs, "Worker overloaded: dispatcher queue full, request dropped")
+			}
+		}
 	}
 }
 
