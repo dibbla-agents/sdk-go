@@ -2,6 +2,8 @@ package correlation
 
 import (
 	"context"
+	"log"
+
 	"github.com/dibbla-agents/sdk-go/internal/maps"
 	"github.com/dibbla-agents/sdk-go/internal/types"
 )
@@ -28,10 +30,18 @@ func (r *Router) Remove(id string) {
 	r.channels.Delete(id)
 }
 
-// Deliver sends a message to the registered channel for the given ID, if present.
+// Deliver sends a message to the registered channel for the given ID, if
+// present. The send is non-blocking: if the channel's buffer is full (e.g. a
+// duplicate response after the waiter already got one, or a waiter that timed
+// out between Load and send), the message is dropped instead of parking the
+// delivering goroutine forever.
 func (r *Router) Deliver(id string, msg types.EventMessage) {
 	if ch, ok := r.channels.Load(id); ok {
-		ch <- msg
+		select {
+		case ch <- msg:
+		default:
+			log.Printf("correlation: dropping response for id %s (channel full or waiter gone)", id)
+		}
 	}
 }
 

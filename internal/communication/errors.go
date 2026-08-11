@@ -12,4 +12,3 @@ var (
 	// ErrInvalidMode indicates an invalid communication mode was specified
 	ErrInvalidMode = errors.New("invalid communication mode")
 )
-
