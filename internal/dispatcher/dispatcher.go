@@ -11,6 +11,7 @@ type Handler func(*types.EventMessage)
 
 // Dispatcher routes events to registered handlers and executes them via a worker pool.
 type Dispatcher struct {
+	mu       sync.RWMutex // guards registry: handlers register after Start()'s workers are live
 	registry map[string]Handler
 	jobs     chan *types.EventMessage
 	wg       sync.WaitGroup
@@ -25,7 +26,19 @@ func NewDispatcher(queueSize int) *Dispatcher {
 }
 
 // Register associates an event name with a handler.
-func (d *Dispatcher) Register(event string, handler Handler) { d.registry[event] = handler }
+func (d *Dispatcher) Register(event string, handler Handler) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.registry[event] = handler
+}
+
+// lookup returns the handler for an event, if registered.
+func (d *Dispatcher) lookup(event string) (Handler, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	handler, ok := d.registry[event]
+	return handler, ok
+}
 
 // Start launches n worker goroutines to process queued events.
 func (d *Dispatcher) Start(n int) {
@@ -37,7 +50,7 @@ func (d *Dispatcher) Start(n int) {
 		go func() {
 			defer d.wg.Done()
 			for msg := range d.jobs {
-				if handler, ok := d.registry[msg.Event]; ok {
+				if handler, ok := d.lookup(msg.Event); ok {
 					handler(msg)
 				} else {
 					log.Printf("No handler registered for event: %s", msg.Event)

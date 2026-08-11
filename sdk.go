@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dibbla-agents/sdk-go/internal/basefunction"
+	"github.com/dibbla-agents/sdk-go/internal/diagnostics"
 	"github.com/dibbla-agents/sdk-go/internal/dispatcher"
 	"github.com/dibbla-agents/sdk-go/internal/handlers"
 	"github.com/dibbla-agents/sdk-go/internal/rpc"
@@ -226,6 +227,10 @@ func (s *Server) Init() error {
 // Start initializes and starts the server
 func (s *Server) Start() error {
 	log.Printf("Starting server with name: %s", s.config.ServerName)
+
+	// Optional pprof endpoint (SDK_PPROF_ADDR) and GOMEMLIMIT from the cgroup
+	// memory limit. Best-effort; never fails startup.
+	diagnostics.Setup()
 
 	// Initialize if not already done
 	if err := s.Init(); err != nil {

@@ -4,10 +4,12 @@ import (
 	"context"
 	"net"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/dibbla-agents/sdk-go/internal/types"
 	"github.com/dibbla-agents/sdk-go/internal/workflowsgrpc"
 
 	"google.golang.org/grpc"
@@ -244,4 +246,40 @@ func TestCloseIsCleanWhileConnected(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("incomingEvents was not closed for the consumer")
 	}
+}
+
+// TestConcurrentSendEventIsSerialised hammers SendEvent from many goroutines.
+// grpc-go forbids concurrent SendMsg on one stream; pre-fix SendEvent held
+// only an RLock (no mutual exclusion). Run with -race.
+func TestConcurrentSendEventIsSerialised(t *testing.T) {
+	block := make(chan struct{})
+	_, gc := startFakeServer(t, func(stream grpc.BidiStreamingServer[workflowsgrpc.GrpcEventMessage, workflowsgrpc.GrpcEventMessage]) error {
+		for { // consume everything until the test ends
+			if _, err := stream.Recv(); err != nil {
+				<-block
+				return nil
+			}
+		}
+	})
+	defer close(block)
+
+	if err := gc.Connect(); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer gc.Close()
+	if err := gc.WaitForConnection(5 * time.Second); err != nil {
+		t.Fatalf("never connected: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for g := 0; g < 16; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				gc.SendEvent(&types.EventMessage{Server: "test-server", Event: "test_event", Text: "x"})
+			}
+		}()
+	}
+	wg.Wait()
 }

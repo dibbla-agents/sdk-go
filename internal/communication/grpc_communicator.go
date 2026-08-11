@@ -56,6 +56,7 @@ type GrpcCommunicator struct {
 
 	// Synchronization
 	mu            sync.RWMutex
+	sendMu        sync.Mutex // serialises stream.Send: grpc-go forbids concurrent SendMsg on one stream
 	connected     bool
 	connCancel    context.CancelFunc // cancels the current connection's context
 	reconnectCh   chan error         // signals connection loss with its cause (buffered 1, non-blocking sends)
@@ -396,7 +397,10 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 		CorrelationId: "",
 	}
 
-	if err := stream.Send(registrationMsg); err != nil {
+	gc.sendMu.Lock()
+	err = stream.Send(registrationMsg)
+	gc.sendMu.Unlock()
+	if err != nil {
 		connCancel()
 		conn.Close()
 		log.Printf("Failed to register with server: %v", err)
@@ -452,8 +456,12 @@ func (gc *GrpcCommunicator) SendEvent(event *types.EventMessage) error {
 		return fmt.Errorf("failed to convert event to gRPC format: %w", err)
 	}
 
-	// Send the message
-	if err := gc.stream.Send(grpcMsg); err != nil {
+	// Send the message. gc.mu.RLock alone gives no mutual exclusion between
+	// concurrent senders, and grpc-go forbids concurrent SendMsg on a stream.
+	gc.sendMu.Lock()
+	err = gc.stream.Send(grpcMsg)
+	gc.sendMu.Unlock()
+	if err != nil {
 		log.Printf("Failed to send event via gRPC: %v", err)
 		// Trigger reconnection
 		gc.signalDisconnect(fmt.Errorf("send failed: %w", err))
