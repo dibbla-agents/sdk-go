@@ -192,11 +192,14 @@ func (gc *GrpcCommunicator) run() {
 			return
 		}
 
+		connectionDied := false
+		var cause error
 		if gc.attemptConnection() {
 			connectedAt := time.Now()
-			cause := gc.superviseConnection()
+			cause = gc.superviseConnection()
 			gc.disconnect()
 			gc.drainReconnectSignal() // discard stale signals from the connection just torn down
+			connectionDied = true
 
 			if gc.ctx.Err() != nil {
 				return
@@ -211,25 +214,31 @@ func (gc *GrpcCommunicator) run() {
 
 			if isNonRetryable(cause) {
 				// Cannot succeed by retrying (invalid/expired token, revoked
-				// access). Go straight to the slowest cadence and say why.
+				// access). Go straight to the slowest cadence.
 				backoff = gc.maxBackoff
-				if st, ok := status.FromError(cause); ok && st.Code() == codes.Unauthenticated {
-					log.Printf("❌ Authentication failed: Invalid or expired API token. Retrying in %v. Error: %v", backoff, st.Message())
-				} else {
-					log.Printf("❌ Non-retryable error on stream: %v. Retrying in %v", cause, backoff)
-				}
-			} else {
-				log.Printf("Connection lost (%v), reconnecting in %v", cause, backoff)
 			}
 		}
 
 		// Wait before the next attempt — on EVERY path, including
 		// connected-then-died. Jitter spreads simultaneous reconnects across
 		// the fleet (e.g. after a server restart) to avoid thundering herds.
+		delay := jitter(backoff)
+		if connectionDied {
+			if isNonRetryable(cause) {
+				if st, ok := status.FromError(cause); ok && st.Code() == codes.Unauthenticated {
+					log.Printf("❌ Authentication failed: Invalid or expired API token. Retrying in %v. Error: %v", delay, st.Message())
+				} else {
+					log.Printf("❌ Non-retryable error on stream: %v. Retrying in %v", cause, delay)
+				}
+			} else {
+				log.Printf("Connection lost (%v), reconnecting in %v", cause, delay)
+			}
+		}
+
 		select {
 		case <-gc.ctx.Done():
 			return
-		case <-time.After(jitter(backoff)):
+		case <-time.After(delay):
 		}
 
 		backoff *= 2
