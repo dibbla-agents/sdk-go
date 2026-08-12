@@ -26,6 +26,9 @@ type CommunicationConfig struct {
 	// TLSInsecureSkipVerify disables TLS certificate verification. Only takes
 	// effect when TLS is used. Insecure: use only for self-signed/untrusted certs.
 	TLSInsecureSkipVerify bool
+	// HTTP/2 keepalive ping interval and ack timeout (seconds). 0 = SDK defaults.
+	KeepaliveTimeSec    int
+	KeepaliveTimeoutSec int
 }
 
 // NewGlobalStateWithMode creates a GlobalState with the specified communication mode
@@ -105,6 +108,7 @@ func setupGrpcMode(gs *GlobalState, config CommunicationConfig) (communication.W
 	)
 	grpcCommunicator.SetOrgID(config.OrgID)
 	grpcCommunicator.SetInsecureSkipVerify(config.TLSInsecureSkipVerify)
+	grpcCommunicator.SetKeepalive(config.KeepaliveTimeSec, config.KeepaliveTimeoutSec)
 
 	// Connect to gRPC server
 	if err := grpcCommunicator.Connect(); err != nil {

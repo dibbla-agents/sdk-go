@@ -283,3 +283,40 @@ func TestConcurrentSendEventIsSerialised(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// TestKeepaliveParamsDefaults verifies the FAT-20 keepalive: defaults must be
+// 5m/20s — the fastest interval a gRPC server's default enforcement policy
+// tolerates on a direct connection — and never permit pings without a stream.
+func TestKeepaliveParamsDefaults(t *testing.T) {
+	gc := NewGrpcCommunicatorWithTLS("localhost:0", "test-server", "test-token", 10, 1, 1, 0, false)
+
+	got := gc.keepaliveParams()
+	if got.Time != defaultKeepaliveTime {
+		t.Errorf("default keepalive Time = %v, want %v", got.Time, defaultKeepaliveTime)
+	}
+	if got.Timeout != defaultKeepaliveTimeout {
+		t.Errorf("default keepalive Timeout = %v, want %v", got.Timeout, defaultKeepaliveTimeout)
+	}
+	if got.PermitWithoutStream {
+		t.Error("PermitWithoutStream must be false: default server enforcement rejects it")
+	}
+}
+
+// TestKeepaliveParamsOverride verifies SetKeepalive takes effect and that zero
+// or negative values fall back to the defaults rather than disabling pings.
+func TestKeepaliveParamsOverride(t *testing.T) {
+	gc := NewGrpcCommunicatorWithTLS("localhost:0", "test-server", "test-token", 10, 1, 1, 0, false)
+
+	gc.SetKeepalive(30, 10)
+	got := gc.keepaliveParams()
+	if got.Time != 30*time.Second || got.Timeout != 10*time.Second {
+		t.Errorf("keepalive after SetKeepalive(30, 10) = %v/%v, want 30s/10s", got.Time, got.Timeout)
+	}
+
+	gc.SetKeepalive(0, -5)
+	got = gc.keepaliveParams()
+	if got.Time != defaultKeepaliveTime || got.Timeout != defaultKeepaliveTimeout {
+		t.Errorf("keepalive after SetKeepalive(0, -5) = %v/%v, want defaults %v/%v",
+			got.Time, got.Timeout, defaultKeepaliveTime, defaultKeepaliveTimeout)
+	}
+}

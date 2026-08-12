@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
@@ -30,6 +31,17 @@ import (
 const (
 	defaultMaxBackoff        = 5 * time.Minute
 	defaultHealthyResetAfter = 60 * time.Second
+)
+
+// HTTP/2 keepalive defaults. The 5-minute ping interval is the fastest a gRPC
+// server's default keepalive enforcement policy tolerates on a direct
+// connection; anything faster earns a GOAWAY "too_many_pings". Deployments
+// behind an HTTP/2 proxy that answers pings itself (e.g. Traefik) can safely
+// opt into a shorter interval via SetKeepalive. PermitWithoutStream stays
+// false because the worker always holds the Events stream while connected.
+const (
+	defaultKeepaliveTime    = 5 * time.Minute
+	defaultKeepaliveTimeout = 20 * time.Second
 )
 
 // GrpcCommunicator implements WorkflowCommunicator using gRPC
@@ -72,6 +84,10 @@ type GrpcCommunicator struct {
 	healthcheckIntervalSec int
 	pingIntervalSec        int // 0 = disabled
 
+	// HTTP/2 keepalive intervals (seconds). 0 = SDK defaults.
+	keepaliveTimeSec    int
+	keepaliveTimeoutSec int
+
 	// Backoff tuning (overridable in tests)
 	maxBackoff        time.Duration
 	healthyResetAfter time.Duration
@@ -112,6 +128,35 @@ func (gc *GrpcCommunicator) SetOrgID(orgID string) {
 // untrusted certificates in controlled environments.
 func (gc *GrpcCommunicator) SetInsecureSkipVerify(skip bool) {
 	gc.insecureSkipVerify = skip
+}
+
+// SetKeepalive configures the HTTP/2 keepalive ping interval and ack timeout,
+// in seconds. Zero or negative values fall back to the SDK defaults (5m / 20s).
+// The keepalive detects silently-dead connections (dropped NAT/firewall
+// mappings, VPN blips) so the worker reconnects on its own instead of hanging
+// on a stream that will never deliver again. Do not set an interval below 5
+// minutes when the worker dials a gRPC server directly: the server's default
+// enforcement policy answers faster pings with GOAWAY "too_many_pings".
+func (gc *GrpcCommunicator) SetKeepalive(timeSec, timeoutSec int) {
+	gc.keepaliveTimeSec = timeSec
+	gc.keepaliveTimeoutSec = timeoutSec
+}
+
+// keepaliveParams resolves the effective client keepalive parameters.
+func (gc *GrpcCommunicator) keepaliveParams() keepalive.ClientParameters {
+	kaTime := defaultKeepaliveTime
+	if gc.keepaliveTimeSec > 0 {
+		kaTime = time.Duration(gc.keepaliveTimeSec) * time.Second
+	}
+	kaTimeout := defaultKeepaliveTimeout
+	if gc.keepaliveTimeoutSec > 0 {
+		kaTimeout = time.Duration(gc.keepaliveTimeoutSec) * time.Second
+	}
+	return keepalive.ClientParameters{
+		Time:                kaTime,
+		Timeout:             kaTimeout,
+		PermitWithoutStream: false,
+	}
 }
 
 // ShouldUseTLS determines if TLS should be used based on the server address
@@ -353,6 +398,12 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 	// (e.g. split-DNS / Tailscale setups where Go sends the query to a LAN
 	// nameserver that drops it). The A record still resolves normally.
 	opts = append(opts, grpc.WithDisableServiceConfig())
+
+	// HTTP/2 keepalive: detects silently-dead connections so the worker
+	// reconnects instead of blocking forever on a stream that will never
+	// deliver again. Appended before gc.dialOpts so callers can override.
+	opts = append(opts, grpc.WithKeepaliveParams(gc.keepaliveParams()))
+
 	opts = append(opts, gc.dialOpts...)
 
 	conn, err := grpc.NewClient(gc.serverAddress, opts...)

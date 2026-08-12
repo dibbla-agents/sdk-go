@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"os"
+	"strconv"
 )
 
 // Config holds the configuration for the SDK server
@@ -29,6 +30,11 @@ type Config struct {
 	GrpcReconnectIntervalSec   int
 	GrpcHealthcheckIntervalSec int
 	PingIntervalSec            int // Interval for sending ping messages (0 = disabled)
+
+	// HTTP/2 keepalive ping interval and ack timeout (seconds). 0 = SDK
+	// defaults (5m / 20s). See WithGrpcKeepalive for constraints.
+	GrpcKeepaliveTimeSec    int
+	GrpcKeepaliveTimeoutSec int
 }
 
 // Option is a functional option for configuring the SDK
@@ -56,6 +62,11 @@ func defaultConfig() *Config {
 		insecureSkipVerify = true
 	}
 	
+	// HTTP/2 keepalive tuning via env (0 = SDK defaults). Lets deployed
+	// workers opt into faster dead-connection detection without a rebuild.
+	keepaliveTime := getEnvIntWithDefault("GRPC_KEEPALIVE_TIME_SEC", 0)
+	keepaliveTimeout := getEnvIntWithDefault("GRPC_KEEPALIVE_TIMEOUT_SEC", 0)
+
 	// Defaults mirror current hard-coded behavior
 	handlersConcurrency := 8
 	incomingBuffer := 100
@@ -77,6 +88,8 @@ func defaultConfig() *Config {
 		GrpcReconnectIntervalSec:   reconnectInterval,
 		GrpcHealthcheckIntervalSec: healthcheckInterval,
 		PingIntervalSec:            pingInterval,
+		GrpcKeepaliveTimeSec:       keepaliveTime,
+		GrpcKeepaliveTimeoutSec:    keepaliveTimeout,
 	}
 }
 
@@ -156,6 +169,23 @@ func WithPingInterval(seconds int) Option {
 	return func(c *Config) { c.PingIntervalSec = seconds }
 }
 
+// WithGrpcKeepalive sets the HTTP/2 keepalive ping interval and ack timeout,
+// in seconds. Zero values use the SDK defaults (300s / 20s). The keepalive
+// detects silently-dead connections (dropped NAT/firewall mappings, VPN blips)
+// so the worker reconnects on its own instead of hanging on a dead stream.
+//
+// Do not set timeSec below 300 when the worker dials a gRPC server directly:
+// gRPC servers' default keepalive enforcement rejects faster pings with
+// GOAWAY "too_many_pings". Behind an HTTP/2 proxy that answers pings itself
+// (e.g. Traefik ingress), shorter intervals such as 30s are safe and give
+// faster dead-connection detection.
+func WithGrpcKeepalive(timeSec, timeoutSec int) Option {
+	return func(c *Config) {
+		c.GrpcKeepaliveTimeSec = timeSec
+		c.GrpcKeepaliveTimeoutSec = timeoutSec
+	}
+}
+
 // applyToEnvironment applies the configuration to environment variables
 // This ensures compatibility with existing code that reads from env vars
 func (c *Config) applyToEnvironment() {
@@ -169,6 +199,17 @@ func (c *Config) applyToEnvironment() {
 func getEnvWithDefault(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+// getEnvIntWithDefault returns the environment variable parsed as an int, or
+// the default if unset or not a valid integer.
+func getEnvIntWithDefault(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if n, err := strconv.Atoi(value); err == nil {
+			return n
+		}
 	}
 	return defaultValue
 }

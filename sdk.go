@@ -89,6 +89,8 @@ func (s *Server) initializeGlobalState() error {
 		PingIntervalSec:        s.config.PingIntervalSec,
 		UseTLS:                 s.config.GrpcUseTLS,
 		TLSInsecureSkipVerify:  s.config.GrpcTLSInsecureSkipVerify,
+		KeepaliveTimeSec:       s.config.GrpcKeepaliveTimeSec,
+		KeepaliveTimeoutSec:    s.config.GrpcKeepaliveTimeoutSec,
 	}
 
 	globalState, err := state.NewGlobalStateWithMode(commConfig)
