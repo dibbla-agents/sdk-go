@@ -82,6 +82,7 @@ func (s *Server) initializeGlobalState() error {
 		ServerName:             s.config.ServerName,
 		GrpcServerAddress:      s.config.GrpcServerAddress,
 		ServerApiToken:         s.config.ServerApiToken,
+		IdentityTokenFile:      s.config.IdentityTokenFile,
 		OrgID:                  s.config.OrgID,
 		IncomingBuffer:         s.config.IncomingEventsBuffer,
 		ReconnectIntervalSec:   s.config.GrpcReconnectIntervalSec,

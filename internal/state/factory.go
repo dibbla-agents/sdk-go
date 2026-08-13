@@ -2,6 +2,7 @@ package state
 
 import (
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/dibbla-agents/sdk-go/internal/basefunction"
@@ -17,6 +18,10 @@ type CommunicationConfig struct {
 	ServerName             string
 	GrpcServerAddress      string
 	ServerApiToken         string
+	// IdentityTokenFile: explicit projected-token path (DIB-202). Used only
+	// when ServerApiToken is empty; empty means probe the platform env var
+	// and default mount path.
+	IdentityTokenFile      string
 	OrgID                  string // optional: pin registration to a specific org
 	IncomingBuffer         int
 	ReconnectIntervalSec   int
@@ -109,6 +114,18 @@ func setupGrpcMode(gs *GlobalState, config CommunicationConfig) (communication.W
 	grpcCommunicator.SetOrgID(config.OrgID)
 	grpcCommunicator.SetInsecureSkipVerify(config.TLSInsecureSkipVerify)
 	grpcCommunicator.SetKeepalive(config.KeepaliveTimeSec, config.KeepaliveTimeoutSec)
+
+	// Workload identity (DIB-202): when no explicit API token is configured
+	// and a projected identity token file is present (platform env var or
+	// the default mount), use it as the credential. The file is re-read at
+	// every (re)connect, so kubelet rotation needs no coordination. An
+	// explicit ServerApiToken always wins — local dev is unchanged.
+	if config.ServerApiToken == "" {
+		if fp := communication.DetectFileTokenProvider(config.IdentityTokenFile); fp != nil {
+			log.Printf("🔐 Using workload identity credential (%s)", fp.Source())
+			grpcCommunicator.SetTokenProvider(fp)
+		}
+	}
 
 	// Connect to gRPC server
 	if err := grpcCommunicator.Connect(); err != nil {
