@@ -52,6 +52,14 @@ type GrpcCommunicator struct {
 	stream        grpc.BidiStreamingClient[workflowsgrpc.GrpcEventMessage, workflowsgrpc.GrpcEventMessage]
 	serverName    string
 	apiToken      string
+	// tokenProvider, when set, supplies the credential at every stream open
+	// (overriding apiToken). Used for workload identity (DIB-202): a
+	// file-backed provider re-reads the kubelet-rotated projected token on
+	// each (re)connect. lastToken records what the current/last connection
+	// attempt actually presented, so credentialRotated() can detect an
+	// on-disk rotation after an Unauthenticated rejection.
+	tokenProvider TokenProvider
+	lastToken     string
 	orgID         string // optional: sent as x-org-id metadata to pin the org
 	useTLS        bool   // Determined at creation time
 	// insecureSkipVerify, when true, disables TLS certificate verification.
@@ -114,6 +122,31 @@ func NewGrpcCommunicator(serverAddress, serverName, apiToken string) *GrpcCommun
 		maxBackoff:             defaultMaxBackoff,
 		healthyResetAfter:      defaultHealthyResetAfter,
 	}
+}
+
+// SetTokenProvider installs a dynamic credential source (workload identity,
+// DIB-202). Must be called before Connect(). When set, it takes precedence
+// over the constructor apiToken at every stream open.
+func (gc *GrpcCommunicator) SetTokenProvider(p TokenProvider) {
+	gc.mu.Lock()
+	defer gc.mu.Unlock()
+	gc.tokenProvider = p
+}
+
+// credentialRotated reports whether the token source now yields a different
+// credential than the last connection attempt presented. Used after an
+// Unauthenticated rejection: a rotated projected token means a prompt retry
+// is worthwhile; an unchanged one means the slow holding pattern is right.
+func (gc *GrpcCommunicator) credentialRotated() bool {
+	gc.mu.RLock()
+	provider := gc.tokenProvider
+	last := gc.lastToken
+	gc.mu.RUnlock()
+	if provider == nil {
+		return false
+	}
+	t, err := provider.Token()
+	return err == nil && t != "" && t != last
 }
 
 // SetOrgID sets an optional organization id, sent as x-org-id gRPC metadata so
@@ -258,9 +291,19 @@ func (gc *GrpcCommunicator) run() {
 			}
 
 			if isNonRetryable(cause) {
-				// Cannot succeed by retrying (invalid/expired token, revoked
-				// access). Go straight to the slowest cadence.
-				backoff = gc.maxBackoff
+				if gc.credentialRotated() {
+					// The token source now yields a different credential than
+					// the rejected attempt presented (kubelet rotated the
+					// projected workload-identity token). The next attempt has
+					// a real chance — retry on the normal cadence instead of
+					// pinning to the holding pattern.
+					log.Printf("🔁 Credential rotated since last attempt; retrying on normal cadence")
+					backoff = initial
+				} else {
+					// Cannot succeed by retrying (invalid/expired token,
+					// revoked access). Go straight to the slowest cadence.
+					backoff = gc.maxBackoff
+				}
 			}
 		}
 
@@ -368,9 +411,23 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 
 	log.Printf("Attempting to connect to gRPC server at %s...", gc.serverAddress)
 
-	// Warn if no API token is provided
-	if gc.apiToken == "" {
-		log.Printf("⚠️  Warning: No API token provided. Set SERVER_API_TOKEN environment variable for authentication.")
+	// Resolve the credential for THIS attempt. The provider (when set) is
+	// consulted fresh on every (re)connect, so file-backed workload-identity
+	// tokens pick up kubelet rotation automatically.
+	token := gc.apiToken
+	if gc.tokenProvider != nil {
+		if t, err := gc.tokenProvider.Token(); err != nil {
+			log.Printf("⚠️  Warning: credential read failed (%s): %v — attempting without it", gc.tokenProvider.Source(), err)
+			token = ""
+		} else {
+			token = t
+		}
+	}
+	gc.lastToken = token
+
+	// Warn if no credential is available at all
+	if token == "" {
+		log.Printf("⚠️  Warning: No credential available. Set SERVER_API_TOKEN, or run on the Dibbla platform where a workload identity token is provided (%s).", DefaultIdentityTokenPath)
 	}
 
 	// Create gRPC connection with appropriate credentials
@@ -420,10 +477,10 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 
 	// Attach authentication metadata
 	streamCtx := connCtx
-	if gc.apiToken != "" || gc.orgID != "" {
+	if token != "" || gc.orgID != "" {
 		pairs := map[string]string{}
-		if gc.apiToken != "" {
-			pairs["authorization"] = "Bearer " + gc.apiToken
+		if token != "" {
+			pairs["authorization"] = "Bearer " + token
 		}
 		if gc.orgID != "" {
 			pairs["x-org-id"] = gc.orgID
@@ -438,8 +495,8 @@ func (gc *GrpcCommunicator) attemptConnection() bool {
 		conn.Close()
 		// Check if this is an authentication error
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unauthenticated {
-			if gc.apiToken == "" {
-				log.Printf("❌ Authentication failed: No API token provided. Set SERVER_API_TOKEN environment variable.")
+			if token == "" {
+				log.Printf("❌ Authentication failed: No credential provided. Set SERVER_API_TOKEN or run with a workload identity token.")
 			} else {
 				log.Printf("❌ Authentication failed: Invalid or expired API token. Error: %v", st.Message())
 			}

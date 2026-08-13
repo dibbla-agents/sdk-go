@@ -84,14 +84,23 @@ func main() {
 | --------------------- | -------------------- | ---------------------------------------------- |
 | `SERVER_NAME`         | `codex-go-worker`    | Unique identifier for this worker              |
 | `GRPC_SERVER_ADDRESS` | `grpc.dibbla.com:443` | Address of the workflow server (the proxy gRPC endpoint) |
-| `SERVER_API_TOKEN`    | _(empty)_            | Your Dibbla API token (`ak_…`, created in the console) |
+| `SERVER_API_TOKEN`    | _(empty)_            | Your Dibbla API token (`ak_…`, created in the console) — only needed for local development |
+| `DIBBLA_IDENTITY_TOKEN_FILE` | _(platform-set)_ | Path to the workload-identity token; the Dibbla platform injects this automatically |
 | `SERVER_ORG_ID`       | _(empty)_            | Optional: pin registration to a specific org (multi-org token owners) |
 | `GRPC_USE_TLS`        | _(auto-detect)_      | Enable/disable TLS (`true`, `false`, or empty) |
 
 #### Authentication & org scoping
 
-Set `SERVER_API_TOKEN` to a personal API token (`ak_…`) generated in the Dibbla
-console. The connection is authenticated centrally by the proxy against the
+**Deployed on the Dibbla platform: no token needed.** The platform mints a
+workload identity for every deployment (a projected, auto-rotating
+Kubernetes token) and the SDK picks it up automatically — your worker
+authenticates as its tenant + deployment with zero configuration, and there
+is no credential to provision, rotate, or leak.
+
+**Local development:** set `SERVER_API_TOKEN` to a personal API token
+(`ak_…`) generated in the Dibbla console. An explicit API token always wins
+over the workload identity, so you can also use one in-cluster to override.
+The connection is authenticated centrally by the proxy against the
 auth-service — the same flow as the rest of the platform — and the functions
 your tool server registers are scoped to your organization.
 

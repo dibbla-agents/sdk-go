@@ -14,6 +14,13 @@ type Config struct {
 	CommunicationMode string // will be forced to "grpc"
 	GrpcServerAddress string // Address of the gRPC workflow server
 	ServerApiToken    string // API token for authentication
+	// IdentityTokenFile points at a projected workload-identity token file
+	// (DIB-202). Precedence: ServerApiToken (explicit key) wins; otherwise
+	// this file is used when present; the Dibbla platform sets
+	// DIBBLA_IDENTITY_TOKEN_FILE and mounts the default path, so in-cluster
+	// workers need NO configuration at all. The file is re-read at every
+	// (re)connect, following kubelet rotation.
+	IdentityTokenFile string
 	OrgID             string // optional: pin registration to a specific org (multi-org users)
 	GrpcUseTLS        *bool  // nil = auto-detect based on address
 	// GrpcTLSInsecureSkipVerify disables TLS certificate verification. Only
@@ -47,6 +54,7 @@ func defaultConfig() *Config {
 	communicationMode := getEnvWithDefault("COMMUNICATION_MODE", "grpc")
 	grpcServerAddress := getEnvWithDefault("GRPC_SERVER_ADDRESS", "grpc.dibbla.com:443")
 	serverApiToken := getEnvWithDefault("SERVER_API_TOKEN", "")
+	identityTokenFile := getEnvWithDefault("DIBBLA_IDENTITY_TOKEN_FILE", "")
 	orgID := getEnvWithDefault("SERVER_ORG_ID", "")
 	
 	// TLS configuration with auto-detection
@@ -80,6 +88,7 @@ func defaultConfig() *Config {
 		CommunicationMode:          communicationMode,
 		GrpcServerAddress:          grpcServerAddress,
 		ServerApiToken:             serverApiToken,
+		IdentityTokenFile:          identityTokenFile,
 		OrgID:                      orgID,
 		GrpcUseTLS:                 defaultTLS,
 		GrpcTLSInsecureSkipVerify:  insecureSkipVerify,
@@ -119,6 +128,14 @@ func WithGrpcServerAddress(address string) Option {
 // WithServerApiToken sets the API token for authentication
 func WithServerApiToken(token string) Option {
 	return func(c *Config) { c.ServerApiToken = token }
+}
+
+// WithIdentityTokenFile points the SDK at a projected workload-identity
+// token file (DIB-202). Rarely needed: the Dibbla platform injects
+// DIBBLA_IDENTITY_TOKEN_FILE and the default mount path is probed
+// automatically. An explicit ServerApiToken always wins over the file.
+func WithIdentityTokenFile(path string) Option {
+	return func(c *Config) { c.IdentityTokenFile = path }
 }
 
 // WithOrgID pins function registration to a specific organization. Use this
