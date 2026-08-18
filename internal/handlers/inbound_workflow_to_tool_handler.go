@@ -120,10 +120,17 @@ func HandleIncomingWorkflow(gs *state.GlobalState) {
 			// control events (which dispatch direct) still get through and
 			// parked handlers can complete and free the pool (FAT-19).
 			log.Printf("Dispatcher queue full, dropping event: %s (workflow: %s)", msg.Event, msg.Workflow)
-			if msg.Event == types.EventFunctionRequest {
+			switch msg.Event {
+			case types.EventFunctionRequest:
 				// Fail the caller fast instead of letting it wait out its timeout.
 				fs := state.NewEventState(msg.Server, msg.Function, msg.Version, msg.Node, msg.Workflow, msg.Run, gs.ServerName, msg.CorrelationID)
 				sendErrorEvent(gs, fs, "Worker overloaded: dispatcher queue full, request dropped")
+			case types.EventCapabilityProviderRequest:
+				// Same fast-fail for capability provider calls, on the seat's
+				// structured response channel so the engine's correlation RPC
+				// resolves with a coded failure instead of timing out.
+				fs := state.NewEventState(msg.Server, msg.Function, msg.Version, msg.Node, msg.Workflow, msg.Run, gs.ServerName, msg.CorrelationID)
+				sendCapabilityProviderErrorResponse(gs, fs, "worker overloaded: dispatcher queue full, capability provider request dropped")
 			}
 		}
 	}
