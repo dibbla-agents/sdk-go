@@ -376,6 +376,35 @@ calls with an explicit "not supported" error. See `cmd/worker/examples/tool_sear
 for a runnable example, and the doc comments on `ToolSearchProvider` for the full
 contract.
 
+#### memory — custom history policy
+
+Replaces the built-in conversation replay for agent nodes with
+`history_policy: custom`. The platform keeps blob custody; your transform picks
+what gets injected into the model's context, under an enforced token budget:
+
+```go
+server.RegisterCapabilityProvider(sdk.MemoryProvider{
+    Name:               "my-memory",
+    Version:            "1.0.0",
+    MaxHistoryFraction: 0.5, // optional share of the context window (clamped)
+    Transform: func(currentMessage string, turns []sdk.Turn, tokenBudget int, meta sdk.ThreadMeta) ([]sdk.Turn, error) {
+        // turns = the thread's stored history (v2 Turn/Part shapes).
+        // Return the turns to inject, in order, under tokenBudget.
+        // currentMessage is for query-conditioned retrieval only — the engine
+        // appends the real user message itself.
+        return selectRelevant(currentMessage, turns, tokenBudget), nil
+    },
+})
+```
+
+Returned turns must carry `user`/`assistant` roles with known part types;
+exceeding the token ceiling (or an absolute byte cap) fails the node fail-fast —
+there is no fallback policy. Note the data boundary: unlike tool_search, the
+memory seat sends full conversation content (text, tool args/results, reasoning)
+to the provider's server. Returned turns are injection-only for that run and are
+never written back to the stored thread. See `cmd/worker/examples/memory_provider.go`
+and the `MemoryProvider` doc comments for the full contract.
+
 ### Removal of `JobHost`
 
 The `JobHost` abstraction has been removed. Jobs now register directly on the server via `server.RegisterJob(handler)`, and the server handles gRPC initialization, the trigger dispatcher, and job lifecycle events as part of `server.Start()`.
