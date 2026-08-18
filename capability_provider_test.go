@@ -188,6 +188,138 @@ func TestRegisterCapabilityProvider_RecordsHandler(t *testing.T) {
 	}
 }
 
+// The Transform handler round-trips a memory request to a response: decode
+// turns+budget+meta, run the transform, encode the returned turns (DIB-154).
+func TestMemoryProvider_HandlerRoundTrip(t *testing.T) {
+	p := MemoryProvider{
+		Name: "marker",
+		Transform: func(currentMessage string, turns []Turn, tokenBudget int, meta ThreadMeta) ([]Turn, error) {
+			marker := Turn{Role: "assistant", Parts: []Part{{Type: PartTypeText, Text: &TextPart{Text: "[marker:" + currentMessage + "]"}}}}
+			out := []Turn{marker}
+			if len(turns) > 0 {
+				out = append(out, turns[len(turns)-1])
+			}
+			return out, nil
+		},
+	}
+	h := p.handler()
+	if h == nil {
+		t.Fatal("expected a handler for a provider with Transform set")
+	}
+
+	reqBytes, _ := json.Marshal(types.MemoryTransformRequest{
+		Capability:     "memory",
+		Provider:       "marker",
+		CurrentMessage: "q",
+		TokenBudget:    60000,
+		ThreadMeta:     types.ThreadMeta{ThreadID: "t1", TurnCount: 2},
+		Turns: []Turn{
+			{Role: "user", Parts: []Part{{Type: PartTypeText, Text: &TextPart{Text: "one"}}}},
+			{Role: "assistant", Parts: []Part{{Type: PartTypeText, Text: &TextPart{Text: "two"}}}},
+		},
+	})
+	respBytes, err := h(&reqBytes)
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	var resp types.MemoryTransformResponse
+	if err := json.Unmarshal(*respBytes, &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Error != "" {
+		t.Fatalf("unexpected error in response: %s", resp.Error)
+	}
+	if len(resp.Turns) != 2 || resp.Turns[0].Parts[0].Text.Text != "[marker:q]" || resp.Turns[1].Parts[0].Text.Text != "two" {
+		t.Fatalf("returned turns = %+v, want [marker:q, two]", resp.Turns)
+	}
+}
+
+// A Transform handler returning an error is encoded into the response's Error
+// field (fail-fast is enforced engine-side, not by dropping the reply).
+func TestMemoryProvider_HandlerError(t *testing.T) {
+	p := MemoryProvider{
+		Name:      "boom",
+		Transform: func(string, []Turn, int, ThreadMeta) ([]Turn, error) { return nil, errString("kaboom") },
+	}
+	reqBytes, _ := json.Marshal(types.MemoryTransformRequest{Capability: "memory", Provider: "boom"})
+	respBytes, err := p.handler()(&reqBytes)
+	if err != nil {
+		t.Fatalf("handler should encode the error into the payload, not return it: %v", err)
+	}
+	var resp types.MemoryTransformResponse
+	_ = json.Unmarshal(*respBytes, &resp)
+	if resp.Error != "kaboom" {
+		t.Fatalf("expected error 'kaboom' in response, got %q", resp.Error)
+	}
+}
+
+// A memory provider without a Transform handler declares no invoke handler
+// (registered for binding only) and records nothing in the handler map.
+func TestMemoryProvider_NoTransformNoHandler(t *testing.T) {
+	p := MemoryProvider{Name: "inert"}
+	if p.handler() != nil {
+		t.Fatal("expected nil handler when Transform is unset")
+	}
+	s := &Server{}
+	if err := s.RegisterCapabilityProvider(p); err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+	if _, ok := s.capabilityHandlers["memory/inert"]; ok {
+		t.Fatal("handler recorded for a provider without Transform")
+	}
+}
+
+// RegisterCapabilityProvider records a memory Transform handler under
+// "<capability>/<name>".
+func TestRegisterCapabilityProvider_RecordsMemoryHandler(t *testing.T) {
+	s := &Server{}
+	err := s.RegisterCapabilityProvider(MemoryProvider{
+		Name:      "marker",
+		Transform: func(string, []Turn, int, ThreadMeta) ([]Turn, error) { return nil, nil },
+	})
+	if err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+	if _, ok := s.capabilityHandlers["memory/marker"]; !ok {
+		t.Fatalf("handler not recorded; keys=%v", s.capabilityHandlers)
+	}
+}
+
+// TestMemoryTurnWireFormat pins the v2 Turn/Part JSON keys the memory seat
+// exchanges with go-toolserver's agenttypes model — a drift here silently
+// corrupts round-tripped history.
+func TestMemoryTurnWireFormat(t *testing.T) {
+	turn := Turn{
+		ID:   "id1",
+		Role: "assistant",
+		Parts: []Part{
+			{Type: PartTypeText, Text: &TextPart{Text: "hi"}},
+			{Type: PartTypeToolCall, ToolCall: &ToolCallPart{ToolName: "search", ProviderToolID: "toolu_1"}},
+		},
+	}
+	raw, _ := json.Marshal(turn)
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if m["role"] != "assistant" || m["id"] != "id1" {
+		t.Errorf("turn keys drifted: %v", m)
+	}
+	parts, ok := m["parts"].([]any)
+	if !ok || len(parts) != 2 {
+		t.Fatalf("parts = %v, want 2 entries", m["parts"])
+	}
+	p0 := parts[0].(map[string]any)
+	if p0["type"] != "text" || p0["text"].(map[string]any)["text"] != "hi" {
+		t.Errorf("text part drifted: %v", p0)
+	}
+	p1 := parts[1].(map[string]any)
+	tc := p1["tool_call"].(map[string]any)
+	if p1["type"] != "tool_call" || tc["tool_name"] != "search" || tc["provider_tool_id"] != "toolu_1" {
+		t.Errorf("tool_call part drifted: %v", p1)
+	}
+}
+
 type errString string
 
 func (e errString) Error() string { return string(e) }
