@@ -45,6 +45,39 @@ func HandleListFunctions(gs *state.GlobalState, fs *state.EventState) {
 	}
 }
 
+// HandleListCapabilityProviders announces the worker's registered capability
+// providers to the workflow server. A worker with no providers sends nothing,
+// so the wire behavior of existing workers is unchanged.
+func HandleListCapabilityProviders(gs *state.GlobalState, fs *state.EventState) {
+	if len(gs.CapabilityProviders) == 0 {
+		return
+	}
+
+	payload, err := json.Marshal(gs.CapabilityProviders)
+	if err != nil {
+		SendErrorEvent(gs, fs, fmt.Sprintf("Error marshalling capability providers: %v", err))
+		return
+	}
+
+	event := types.EventMessage{
+		Function:      fs.Function,
+		Version:       fs.Version,
+		Node:          fs.Node,
+		Workflow:      fs.Workflow,
+		Run:           fs.Run,
+		Server:        gs.ServerName,
+		Event:         types.EventResponseListCapabilityProviders,
+		Text:          "List of capability providers",
+		Meta:          nil,
+		Payload:       &payload,
+		CorrelationID: fs.CorrelationID,
+	}
+
+	if err := gs.WorkflowComm.SendEvent(&event); err != nil {
+		log.Printf("Failed to send list capability providers response: %v", err)
+	}
+}
+
 func handleServerName(gs *state.GlobalState, fs *state.EventState) {
 	event := types.EventMessage{
 		Function:      fs.Function,

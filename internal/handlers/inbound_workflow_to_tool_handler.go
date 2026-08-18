@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 
@@ -81,6 +82,24 @@ func HandleIncomingWorkflow(gs *state.GlobalState) {
 		fs := state.NewEventState(message.Server, message.Function, message.Version, message.Node, message.Workflow, message.Run, gs.ServerName, message.CorrelationID)
 		handleServerName(gs, fs)
 		HandleListFunctions(gs, fs)
+		HandleListCapabilityProviders(gs, fs)
+	})
+
+	// Provider invocation route (DIB-152): decode the request, look up the
+	// registered seat handler by "<capability>/<name>", run it, and reply on
+	// the same correlation ID. A request for a provider without a live
+	// handler gets an explicit error back instead of a silent timeout.
+	gs.Dispatcher.Register(types.EventCapabilityProviderRequest, func(message *types.EventMessage) {
+		fs := state.NewEventState(message.Server, message.Function, message.Version, message.Node, message.Workflow, message.Run, gs.ServerName, message.CorrelationID)
+		handleCapabilityProviderRequest(gs, fs, message)
+	})
+
+	// Catalog pre-sync (DIB-152): a one-way push of the full stub set before
+	// the first query. This SDK version keeps providers stateless (per-query
+	// stubs are always sent), so the catalog is accepted and ignored — logged
+	// only. Future embedding providers can hook this to pre-index.
+	gs.Dispatcher.Register(types.EventCapabilityCatalog, func(message *types.EventMessage) {
+		log.Println("Received capability catalog pre-sync (ignored by this SDK version)")
 	})
 
 	// Read from communicator and dispatch
@@ -101,10 +120,17 @@ func HandleIncomingWorkflow(gs *state.GlobalState) {
 			// control events (which dispatch direct) still get through and
 			// parked handlers can complete and free the pool (FAT-19).
 			log.Printf("Dispatcher queue full, dropping event: %s (workflow: %s)", msg.Event, msg.Workflow)
-			if msg.Event == types.EventFunctionRequest {
+			switch msg.Event {
+			case types.EventFunctionRequest:
 				// Fail the caller fast instead of letting it wait out its timeout.
 				fs := state.NewEventState(msg.Server, msg.Function, msg.Version, msg.Node, msg.Workflow, msg.Run, gs.ServerName, msg.CorrelationID)
 				sendErrorEvent(gs, fs, "Worker overloaded: dispatcher queue full, request dropped")
+			case types.EventCapabilityProviderRequest:
+				// Same fast-fail for capability provider calls, on the seat's
+				// structured response channel so the engine's correlation RPC
+				// resolves with a coded failure instead of timing out.
+				fs := state.NewEventState(msg.Server, msg.Function, msg.Version, msg.Node, msg.Workflow, msg.Run, gs.ServerName, msg.CorrelationID)
+				sendCapabilityProviderErrorResponse(gs, fs, "worker overloaded: dispatcher queue full, capability provider request dropped")
 			}
 		}
 	}
@@ -123,11 +149,71 @@ func isWorkflowOptionalEvent(event string) bool {
 		types.EventRequestServerInfo,
 		types.EventRequestServerName,
 		types.EventRequestListFunctions,
+		types.EventCapabilityProviderRequest,
+		types.EventCapabilityCatalog,
 		types.EventJobTrigger:
 		return true
 	default:
 		return false
 	}
+}
+
+// handleCapabilityProviderRequest runs a registered seat handler and replies
+// with a capability_provider_response. When no handler is registered for the
+// requested provider (or the payload names none), it sends a structured
+// error response so the engine fails the node fail-fast with a clear cause
+// rather than waiting out the call timeout.
+func handleCapabilityProviderRequest(gs *state.GlobalState, fs *state.EventState, message *types.EventMessage) {
+	var req types.CapabilityProviderRequest
+	if message.Payload != nil {
+		if err := json.Unmarshal(*message.Payload, &req); err != nil {
+			sendCapabilityProviderErrorResponse(gs, fs, "capability provider request payload is not valid JSON: "+err.Error())
+			return
+		}
+	}
+
+	key := req.Capability + "/" + req.Provider
+	handler, ok := gs.CapabilityProviderHandlers[key]
+	if !ok || handler == nil {
+		sendCapabilityProviderErrorResponse(gs, fs,
+			fmt.Sprintf("capability provider %q for capability %q is not implemented by this server", req.Provider, req.Capability))
+		return
+	}
+
+	respPayload, err := handler(message.Payload)
+	if err != nil {
+		sendCapabilityProviderErrorResponse(gs, fs, err.Error())
+		return
+	}
+	sendCapabilityProviderResponse(gs, fs, respPayload)
+}
+
+func sendCapabilityProviderResponse(gs *state.GlobalState, fs *state.EventState, payload *[]byte) {
+	event := types.EventMessage{
+		Function:      fs.Function,
+		Version:       fs.Version,
+		Node:          fs.Node,
+		Workflow:      fs.Workflow,
+		Run:           fs.Run,
+		Event:         types.EventCapabilityProviderResponse,
+		Payload:       payload,
+		CorrelationID: fs.CorrelationID,
+	}
+	if err := gs.WorkflowComm.SendEvent(&event); err != nil {
+		log.Printf("Failed to send capability provider response: %v", err)
+	}
+}
+
+// sendCapabilityProviderErrorResponse replies on the response channel with an
+// error-bearing response payload (not an "error" event) so the engine's
+// correlation RPC resolves promptly with a coded provider failure.
+func sendCapabilityProviderErrorResponse(gs *state.GlobalState, fs *state.EventState, errText string) {
+	payload, err := json.Marshal(types.CapabilityProviderResponse{Error: errText})
+	if err != nil {
+		log.Printf("Failed to marshal capability provider error response: %v", err)
+		return
+	}
+	sendCapabilityProviderResponse(gs, fs, &payload)
 }
 
 func sendErrorEvent(gs *state.GlobalState, fs *state.EventState, errorText string) {

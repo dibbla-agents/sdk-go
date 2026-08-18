@@ -342,7 +342,39 @@ ctx.Logger.Progress(50, 100, "msg")  // Progress with total
 ctx.Logger.CompleteProgress()        // Finish progress bar
 ```
 
-## Migration from Previous Versions
+### Capability Providers
+
+Capability providers let a worker replace a platform-built-in behavior for agent
+nodes that bind it — by capability "seat". A provider is registered alongside
+functions and announced automatically on startup and reconnect; a workflow binds
+it on an agent node via `capability_providers: {<seat>: "<provider-name>"}` in
+slim YAML. Registering providers is fully additive: workers that register none
+behave exactly as before.
+
+#### tool_search — custom tool selection
+
+Replaces the built-in candidate selection for the agent's `tool_search` tool.
+The platform owns sourcing (you always select from the offered stubs, never add
+tools); the provider owns ranking/selection:
+
+```go
+server.RegisterCapabilityProvider(sdk.ToolSearchProvider{
+    Name:        "my-search",
+    Description: "Ranks tools by my own scoring.",
+    Version:     "1.0.0",
+    Select: func(query string, stubs []sdk.ProviderStub, topN int) ([]string, error) {
+        // stubs carry Name + Description; return up to topN names from the
+        // offered set, in order. Unknown names are dropped engine-side.
+        return rank(query, stubs, topN), nil
+    },
+    // WantsCatalogSync: true  // ask for a catalog pre-push (e.g. to pre-index)
+})
+```
+
+A provider registered with a nil `Select` still appears for binding and answers
+calls with an explicit "not supported" error. See `cmd/worker/examples/tool_search_provider.go`
+for a runnable example, and the doc comments on `ToolSearchProvider` for the full
+contract.
 
 ### Removal of `JobHost`
 
