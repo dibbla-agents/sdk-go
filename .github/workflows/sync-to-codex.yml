@@ -1,10 +1,13 @@
 name: Sync to Codex
 
-# RUNNERS: `ash-linux-amd64` is the ARC runner scale set on the ash cluster
-# (terra-dibbla, modules/arc) — self-hosted, NOT a GitHub-hosted label. The org
-# hit the GitHub Free plan's 2,000 included minutes on 2026-08-21 and every
-# private-repo job began being refused before it started. The runner image is
-# leaner than GitHub's: no `gh`, no `jq`, and ~/.local/bin is not on PATH.
+# RUNNERS: this one stays GitHub-hosted, deliberately. sdk-go is a PUBLIC repo,
+# and public repos get unlimited GitHub-hosted minutes — the 2,000-minute ceiling
+# the org hit on 2026-08-21 only applies to private ones, so there is nothing to
+# save by moving. Moving it does not even work: an org runner group refuses jobs
+# from public repos unless "Allow public repositories" is enabled, and this job
+# sat queued with no runner group assigned until it was cancelled. Enabling that
+# org-wide is a security decision, not a CI one (fork PRs would get to execute on
+# an in-cluster runner). See dibbla-agents/core#160 for the private-repo move.
 
 on:
   push:
@@ -18,7 +21,7 @@ env:
 
 jobs:
   sync:
-    runs-on: ash-linux-amd64
+    runs-on: ubuntu-latest
     steps:
       - name: Initiate the sync sequence
         id: sync_sequence
