@@ -1,5 +1,11 @@
 name: Sync to Codex
 
+# RUNNERS: `ash-linux-amd64` is the ARC runner scale set on the ash cluster
+# (terra-dibbla, modules/arc) — self-hosted, NOT a GitHub-hosted label. The org
+# hit the GitHub Free plan's 2,000 included minutes on 2026-08-21 and every
+# private-repo job began being refused before it started. The runner image is
+# leaner than GitHub's: no `gh`, no `jq`, and ~/.local/bin is not on PATH.
+
 on:
   push:
     branches:
@@ -12,7 +18,7 @@ env:
 
 jobs:
   sync:
-    runs-on: ubuntu-latest
+    runs-on: ash-linux-amd64
     steps:
       - name: Initiate the sync sequence
         id: sync_sequence
