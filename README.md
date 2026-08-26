@@ -387,19 +387,25 @@ server.RegisterCapabilityProvider(sdk.MemoryProvider{
     Name:               "my-memory",
     Version:            "1.0.0",
     MaxHistoryFraction: 0.5, // optional share of the context window (clamped)
-    Transform: func(currentMessage string, turns []sdk.Turn, tokenBudget int, meta sdk.ThreadMeta) ([]sdk.Turn, error) {
+    Transform: func(ctx context.Context, currentMessage string, turns []sdk.Turn, tokenBudget int, meta sdk.ThreadMeta) ([]sdk.Turn, error) {
         // turns = the thread's stored history (v2 Turn/Part shapes).
         // Return the turns to inject, in order, under tokenBudget.
         // currentMessage is for query-conditioned retrieval only — the engine
         // appends the real user message itself.
-        return selectRelevant(currentMessage, turns, tokenBudget), nil
+        // ctx is cancelled when the engine abandons the call (its ~15 s
+        // per-call budget expired, or the run was terminated) — stop work
+        // and abort writes once it fires; no one reads your return value.
+        return selectRelevant(ctx, currentMessage, turns, tokenBudget), nil
     },
 })
 ```
 
 Returned turns must carry `user`/`assistant` roles with known part types;
 exceeding the token ceiling (or an absolute byte cap) fails the node fail-fast —
-there is no fallback policy. Note the data boundary: unlike tool_search, the
+there is no fallback policy. Provider calls run under a hard **~15 second
+per-call budget**: a call that exceeds it fails the node, and the engine sends a
+cancellation (`Transform`'s `ctx` fires) so a timed-out handler can abort any
+side effects instead of committing a write the platform has already given up on. Note the data boundary: unlike tool_search, the
 memory seat sends full conversation content (text, tool args/results, reasoning)
 to the provider's server. Returned turns are injection-only for that run and are
 never written back to the stored thread. See `cmd/worker/examples/memory_provider.go`
