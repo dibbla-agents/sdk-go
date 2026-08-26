@@ -1,6 +1,8 @@
 package state
 
 import (
+	"context"
+
 	"github.com/dibbla-agents/sdk-go/internal/basefunction"
 	"github.com/dibbla-agents/sdk-go/internal/communication"
 	"github.com/dibbla-agents/sdk-go/internal/dispatcher"
@@ -34,9 +36,17 @@ type GlobalState struct {
 	// read-only after handlers activate. Absent key = no handler declared
 	// (the request gets an explicit "not supported" error).
 	CapabilityProviderHandlers map[string]CapabilityProviderHandler
+	// CapabilityCancelFuncs maps an in-flight capability call's correlation
+	// ID to the cancel func for the context its handler runs under (DIB-443).
+	// Stored by the request dispatch, removed when the handler returns;
+	// invoked when the engine's capability_provider_cancel arrives.
+	CapabilityCancelFuncs *maps.SafeFunctionMap[string, context.CancelFunc]
 }
 
 // CapabilityProviderHandler decodes a capability_provider_request payload,
 // runs the provider's seat logic, and returns the response payload to send
 // back. A non-nil error is turned into an error event by the dispatcher.
-type CapabilityProviderHandler func(reqPayload *[]byte) (*[]byte, error)
+// ctx is cancelled when the engine abandons the call (DIB-443: the per-call
+// timeout fired, or the run was terminated) — handlers should stop work and
+// abort writes when it fires.
+type CapabilityProviderHandler func(ctx context.Context, reqPayload *[]byte) (*[]byte, error)

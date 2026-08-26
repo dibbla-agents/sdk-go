@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -101,7 +102,7 @@ func (p ToolSearchProvider) handler() state.CapabilityProviderHandler {
 	if p.Select == nil {
 		return nil
 	}
-	return func(reqPayload *[]byte) (*[]byte, error) {
+	return func(_ context.Context, reqPayload *[]byte) (*[]byte, error) {
 		var req types.CapabilityProviderRequest
 		if reqPayload != nil {
 			if err := json.Unmarshal(*reqPayload, &req); err != nil {
@@ -180,7 +181,14 @@ type MemoryProvider struct {
 	// built-in fallback for history_policy: custom. Leave nil to register the
 	// provider for binding without a live handler yet (a call then replies with
 	// an explicit "not supported" error).
-	Transform func(currentMessage string, turns []Turn, tokenBudget int, meta ThreadMeta) ([]Turn, error)
+	//
+	// ctx is cancelled when the engine abandons the call (DIB-443): the
+	// platform's hard per-call budget (~15 s) expired, or the run was
+	// terminated. Once ctx fires, no one will read your return value — stop
+	// work and, above all, do not commit side effects (a store write after a
+	// timeout lands in a thread the platform already failed). Handlers that
+	// ignore ctx keep working exactly as before, they just waste the effort.
+	Transform func(ctx context.Context, currentMessage string, turns []Turn, tokenBudget int, meta ThreadMeta) ([]Turn, error)
 	// MaxHistoryFraction optionally declares the share of the model's context
 	// window your returned history may occupy (DIB-154), e.g. 0.5 for half.
 	// The platform clamps it to a hard maximum (you may tune down freely, up
@@ -202,14 +210,14 @@ func (p MemoryProvider) handler() state.CapabilityProviderHandler {
 	if p.Transform == nil {
 		return nil
 	}
-	return func(reqPayload *[]byte) (*[]byte, error) {
+	return func(ctx context.Context, reqPayload *[]byte) (*[]byte, error) {
 		var req types.MemoryTransformRequest
 		if reqPayload != nil {
 			if err := json.Unmarshal(*reqPayload, &req); err != nil {
 				return nil, fmt.Errorf("memory provider request decode failed: %w", err)
 			}
 		}
-		turns, err := p.Transform(req.CurrentMessage, req.Turns, req.TokenBudget, req.ThreadMeta)
+		turns, err := p.Transform(ctx, req.CurrentMessage, req.Turns, req.TokenBudget, req.ThreadMeta)
 		var resp types.MemoryTransformResponse
 		if err != nil {
 			resp.Error = err.Error()

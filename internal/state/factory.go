@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -39,10 +40,11 @@ type CommunicationConfig struct {
 // NewGlobalStateWithMode creates a GlobalState with the specified communication mode
 func NewGlobalStateWithMode(config CommunicationConfig) (*GlobalState, error) {
 	gs := &GlobalState{
-		ServerName:       config.ServerName,
-		Functions:        maps.NewSafeFunctionMap[string, basefunction.FunctionInterface](),
-		ResponseHandlers: maps.NewSafeFunctionMap[string, chan *[]byte](),
-		ExecutionState:   maps.NewSafeFunctionMap[string, any](),
+		ServerName:            config.ServerName,
+		Functions:             maps.NewSafeFunctionMap[string, basefunction.FunctionInterface](),
+		ResponseHandlers:      maps.NewSafeFunctionMap[string, chan *[]byte](),
+		ExecutionState:        maps.NewSafeFunctionMap[string, any](),
+		CapabilityCancelFuncs: maps.NewSafeFunctionMap[string, context.CancelFunc](),
 	}
 
 	var err error

@@ -1,6 +1,7 @@
 package examples
 
 import (
+	"context"
 	"log"
 
 	sdk "github.com/dibbla-agents/sdk-go"
@@ -35,7 +36,7 @@ func MarkerMemoryProvider() sdk.MemoryProvider {
 		// the platform clamps this to its hard max and enforces it as the token
 		// ceiling. Left at 0 it would use the platform default (0.75).
 		MaxHistoryFraction: 0.5,
-		Transform: func(currentMessage string, turns []sdk.Turn, tokenBudget int, meta sdk.ThreadMeta) ([]sdk.Turn, error) {
+		Transform: func(ctx context.Context, currentMessage string, turns []sdk.Turn, tokenBudget int, meta sdk.ThreadMeta) ([]sdk.Turn, error) {
 			// Handy while developing a provider: log what the engine actually
 			// sends so you can confirm the incoming message, turn count, budget,
 			// and thread before trusting your transform. The same call also shows

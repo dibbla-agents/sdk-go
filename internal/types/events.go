@@ -64,6 +64,12 @@ const (
 	// engine pushes the full tool_search stub set at run start so providers
 	// that pre-index (e.g. embeddings) can do so. No reply is expected.
 	EventCapabilityCatalog = "capability_catalog"
+	// EventCapabilityProviderCancel is the engine's one-way abandon notice
+	// (DIB-443): the call identified by CorrelationID timed out or its run
+	// was terminated, so no one will read a response. The SDK cancels the
+	// in-flight handler's context; handlers that ignore their context simply
+	// run to completion as before.
+	EventCapabilityProviderCancel = "capability_provider_cancel"
 
 	// OAuth events - Request access tokens for external services (Google, Microsoft, GitHub)
 	EventOAuthTokenRequest   = "oauth_token_request"

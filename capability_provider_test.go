@@ -1,8 +1,10 @@
 package sdk
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/dibbla-agents/sdk-go/internal/types"
 )
@@ -120,7 +122,7 @@ func TestToolSearchProvider_HandlerRoundTrip(t *testing.T) {
 		Stubs:      []ProviderStub{{Name: "a"}, {Name: "b"}, {Name: "c"}},
 		TopN:       5,
 	})
-	respBytes, err := h(&reqBytes)
+	respBytes, err := h(context.Background(), &reqBytes)
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
@@ -146,7 +148,7 @@ func TestToolSearchProvider_HandlerError(t *testing.T) {
 		},
 	}
 	reqBytes, _ := json.Marshal(types.CapabilityProviderRequest{Capability: "tool_search", Provider: "boom"})
-	respBytes, err := p.handler()(&reqBytes)
+	respBytes, err := p.handler()(context.Background(), &reqBytes)
 	if err != nil {
 		t.Fatalf("handler should encode the error into the payload, not return it: %v", err)
 	}
@@ -193,7 +195,7 @@ func TestRegisterCapabilityProvider_RecordsHandler(t *testing.T) {
 func TestMemoryProvider_HandlerRoundTrip(t *testing.T) {
 	p := MemoryProvider{
 		Name: "marker",
-		Transform: func(currentMessage string, turns []Turn, tokenBudget int, meta ThreadMeta) ([]Turn, error) {
+		Transform: func(_ context.Context, currentMessage string, turns []Turn, tokenBudget int, meta ThreadMeta) ([]Turn, error) {
 			marker := Turn{Role: "assistant", Parts: []Part{{Type: PartTypeText, Text: &TextPart{Text: "[marker:" + currentMessage + "]"}}}}
 			out := []Turn{marker}
 			if len(turns) > 0 {
@@ -218,7 +220,7 @@ func TestMemoryProvider_HandlerRoundTrip(t *testing.T) {
 			{Role: "assistant", Parts: []Part{{Type: PartTypeText, Text: &TextPart{Text: "two"}}}},
 		},
 	})
-	respBytes, err := h(&reqBytes)
+	respBytes, err := h(context.Background(), &reqBytes)
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
@@ -238,11 +240,13 @@ func TestMemoryProvider_HandlerRoundTrip(t *testing.T) {
 // field (fail-fast is enforced engine-side, not by dropping the reply).
 func TestMemoryProvider_HandlerError(t *testing.T) {
 	p := MemoryProvider{
-		Name:      "boom",
-		Transform: func(string, []Turn, int, ThreadMeta) ([]Turn, error) { return nil, errString("kaboom") },
+		Name: "boom",
+		Transform: func(context.Context, string, []Turn, int, ThreadMeta) ([]Turn, error) {
+			return nil, errString("kaboom")
+		},
 	}
 	reqBytes, _ := json.Marshal(types.MemoryTransformRequest{Capability: "memory", Provider: "boom"})
-	respBytes, err := p.handler()(&reqBytes)
+	respBytes, err := p.handler()(context.Background(), &reqBytes)
 	if err != nil {
 		t.Fatalf("handler should encode the error into the payload, not return it: %v", err)
 	}
@@ -275,7 +279,7 @@ func TestRegisterCapabilityProvider_RecordsMemoryHandler(t *testing.T) {
 	s := &Server{}
 	err := s.RegisterCapabilityProvider(MemoryProvider{
 		Name:      "marker",
-		Transform: func(string, []Turn, int, ThreadMeta) ([]Turn, error) { return nil, nil },
+		Transform: func(context.Context, string, []Turn, int, ThreadMeta) ([]Turn, error) { return nil, nil },
 	})
 	if err != nil {
 		t.Fatalf("register failed: %v", err)
@@ -323,3 +327,52 @@ func TestMemoryTurnWireFormat(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+// The context handed to Transform is the one the engine's abandon notice
+// cancels (DIB-443): a handler that watches ctx observes the cancellation and
+// can abort its work (e.g. a store write) instead of completing it blind.
+func TestMemoryProvider_TransformObservesCancellation(t *testing.T) {
+	observed := make(chan error, 1)
+	p := MemoryProvider{
+		Name: "ctx-probe",
+		Transform: func(ctx context.Context, _ string, _ []Turn, _ int, _ ThreadMeta) ([]Turn, error) {
+			<-ctx.Done()
+			observed <- ctx.Err()
+			return nil, ctx.Err()
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	reqBytes, _ := json.Marshal(types.MemoryTransformRequest{Capability: "memory", Provider: "ctx-probe"})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		respBytes, err := p.handler()(ctx, &reqBytes)
+		if err != nil {
+			t.Errorf("handler should encode the error into the payload, not return it: %v", err)
+			return
+		}
+		var resp types.MemoryTransformResponse
+		if json.Unmarshal(*respBytes, &resp) != nil || resp.Error == "" {
+			t.Errorf("cancelled transform should surface an error in the response payload")
+		}
+	}()
+
+	cancel()
+	select {
+	case err := <-observed:
+		if err != context.Canceled {
+			t.Fatalf("ctx.Err() = %v, want context.Canceled", err)
+		}
+	case <-timeoutAfter(t):
+		t.Fatal("Transform never observed the cancellation")
+	}
+	<-done
+}
+
+// timeoutAfter gives blocking assertions a bounded wait without importing time
+// at every call site.
+func timeoutAfter(t *testing.T) <-chan time.Time {
+	t.Helper()
+	return time.After(2 * time.Second)
+}
