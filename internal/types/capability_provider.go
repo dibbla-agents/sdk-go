@@ -170,9 +170,36 @@ type Turn struct {
 }
 
 // ThreadMeta carries lightweight context about the thread being transformed.
+//
+// Trust model (DIB-445): the identity fields — OrgID, UserID, RunID,
+// WorkflowID, NodeID — are ENGINE-ASSERTED: workflow-server overwrites them at
+// relay time with values it resolved itself, so a provider can safely
+// partition its store on them (OrgID for tenant isolation, UserID for
+// per-user memory). ThreadID and TurnCount are CALLER-SUPPLIED and
+// unauthenticated — never use ThreadID as a tenant or user boundary. Model is
+// informational, declared by the calling engine build site (calibration info
+// such as token-estimation hints), not a trust boundary.
+//
+// UserID is the opaque id of the authenticated user who triggered the run;
+// it is nil on runs with no authenticated user (api-key runs). It is provided
+// for store partitioning — avoid echoing it into the turns you return, which
+// would place it into the model's context.
+//
+// All new fields are omitempty: an older engine simply leaves them at their
+// zero values.
 type ThreadMeta struct {
 	ThreadID  string `json:"thread_id"`
 	TurnCount int    `json:"turn_count"`
+
+	// Engine-asserted identity (unspoofable; injected by workflow-server).
+	OrgID      string  `json:"org_id,omitempty"`
+	UserID     *string `json:"user_id,omitempty"`
+	RunID      string  `json:"run_id,omitempty"`
+	WorkflowID string  `json:"workflow_id,omitempty"`
+	NodeID     string  `json:"node_id,omitempty"`
+
+	// Informational, builder-declared (not engine-asserted).
+	Model string `json:"model,omitempty"`
 }
 
 // MemoryTransformRequest is the payload of a capability_provider_request for

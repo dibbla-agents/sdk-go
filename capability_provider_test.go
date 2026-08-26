@@ -376,3 +376,37 @@ func timeoutAfter(t *testing.T) <-chan time.Time {
 	t.Helper()
 	return time.After(2 * time.Second)
 }
+
+// DIB-445 wire compat: a new engine's thread_meta with engine-asserted
+// identity decodes into the widened ThreadMeta, and an old engine's meta
+// (thread_id + turn_count only) leaves the new fields at zero values.
+func TestThreadMeta_IdentityWireCompat(t *testing.T) {
+	newEngine := []byte(`{"thread_id":"t1","turn_count":2,"org_id":"org-9",` +
+		`"user_id":"u-3","run_id":"r-1","workflow_id":"w-1","node_id":"n-1","model":"m-x"}`)
+	var meta types.ThreadMeta
+	if err := json.Unmarshal(newEngine, &meta); err != nil {
+		t.Fatalf("decode new-engine meta: %v", err)
+	}
+	if meta.OrgID != "org-9" || meta.UserID == nil || *meta.UserID != "u-3" ||
+		meta.RunID != "r-1" || meta.WorkflowID != "w-1" || meta.NodeID != "n-1" ||
+		meta.Model != "m-x" || meta.ThreadID != "t1" || meta.TurnCount != 2 {
+		t.Errorf("new-engine meta decoded wrong: %+v", meta)
+	}
+
+	// Explicit null user_id (api-key run) decodes to nil, not "".
+	var apiKeyMeta types.ThreadMeta
+	if err := json.Unmarshal([]byte(`{"thread_id":"t2","turn_count":0,"org_id":"org-9","user_id":null}`), &apiKeyMeta); err != nil {
+		t.Fatalf("decode api-key meta: %v", err)
+	}
+	if apiKeyMeta.UserID != nil {
+		t.Errorf("user_id = %v, want nil for api-key run", *apiKeyMeta.UserID)
+	}
+
+	var oldEngine types.ThreadMeta
+	if err := json.Unmarshal([]byte(`{"thread_id":"t3","turn_count":5}`), &oldEngine); err != nil {
+		t.Fatalf("decode old-engine meta: %v", err)
+	}
+	if oldEngine.OrgID != "" || oldEngine.UserID != nil || oldEngine.Model != "" {
+		t.Errorf("old-engine meta should leave new fields zero: %+v", oldEngine)
+	}
+}
