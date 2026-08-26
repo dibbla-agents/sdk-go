@@ -400,6 +400,26 @@ server.RegisterCapabilityProvider(sdk.MemoryProvider{
 })
 ```
 
+`meta` (`sdk.ThreadMeta`) tells you whose memory this is. Two trust tiers:
+
+- **Engine-asserted** — `OrgID`, `UserID`, `RunID`, `WorkflowID`, `NodeID`.
+  workflow-server overwrites these at relay time with values it resolved
+  itself, so they cannot be spoofed by any caller. Partition your store on
+  them (e.g. `<org_id>/<user_id>`). `UserID` is a `*string` and is `nil` on
+  runs with no authenticated user (api-key runs) — always nil-check.
+- **Caller-supplied / informational** — `ThreadID` and `TurnCount` come from
+  the caller unauthenticated (never use `ThreadID` as a tenant or user
+  boundary); `Model` is declared by the engine build site as calibration info.
+
+All ids are opaque — the platform never puts names, emails, roles, or any
+other profile data in `ThreadMeta`. Resolve `UserID` against your own org
+directory if you need profile data, under your own data policies. Two don'ts:
+don't echo `UserID` into the turns you return (it would enter the model's
+context), and remember that persisting `UserID` makes your store hold
+personal data (deletion requests must reach it). The fields are `omitempty`:
+an older engine leaves them at zero values, so gate on `OrgID != ""` if you
+must support both.
+
 Returned turns must carry `user`/`assistant` roles with known part types;
 exceeding the token ceiling (or an absolute byte cap) fails the node fail-fast —
 there is no fallback policy. Provider calls run under a hard **~15 second
