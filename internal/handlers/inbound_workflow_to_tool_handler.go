@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -94,6 +95,24 @@ func HandleIncomingWorkflow(gs *state.GlobalState) {
 		handleCapabilityProviderRequest(gs, fs, message)
 	})
 
+	// Abandon notice (DIB-443): the engine timed out or cancelled the call
+	// identified by CorrelationID — cancel the in-flight handler's context so
+	// context-aware providers stop work and abort writes. Registered DIRECT so
+	// it bypasses the worker-pool queue: a cancel parked behind the very work
+	// it should stop would be useless.
+	gs.Dispatcher.RegisterDirect(types.EventCapabilityProviderCancel, func(message *types.EventMessage) {
+		if cancel, ok := gs.CapabilityCancelFuncs.LoadAndDelete(message.CorrelationID); ok {
+			log.Printf("Capability provider call %s abandoned by engine: cancelling handler", message.CorrelationID)
+			cancel()
+			return
+		}
+		// No in-flight handler yet: the request is still parked in the worker
+		// pool queue (cancels dispatch direct, requests do not). Tombstone the
+		// correlation so the dispatch skips the handler when the abandoned
+		// request finally surfaces, instead of running work nobody will read.
+		gs.CancelledCapabilityCalls.Store(message.CorrelationID, struct{}{})
+	})
+
 	// Catalog pre-sync (DIB-152): a one-way push of the full stub set before
 	// the first query. This SDK version keeps providers stateless (per-query
 	// stubs are always sent), so the catalog is accepted and ignored — logged
@@ -150,6 +169,7 @@ func isWorkflowOptionalEvent(event string) bool {
 		types.EventRequestServerName,
 		types.EventRequestListFunctions,
 		types.EventCapabilityProviderRequest,
+		types.EventCapabilityProviderCancel,
 		types.EventCapabilityCatalog,
 		types.EventJobTrigger:
 		return true
@@ -180,7 +200,24 @@ func handleCapabilityProviderRequest(gs *state.GlobalState, fs *state.EventState
 		return
 	}
 
-	respPayload, err := handler(message.Payload)
+	// A cancel that overtook this request (it was parked in the pool queue
+	// past the engine's per-call budget) left a tombstone — the engine has
+	// already abandoned the call, so don't run the handler at all.
+	if _, cancelled := gs.CancelledCapabilityCalls.LoadAndDelete(message.CorrelationID); cancelled {
+		log.Printf("Capability provider call %s was abandoned before dispatch: skipping handler", message.CorrelationID)
+		return
+	}
+
+	// The handler runs under a cancellable context keyed by the call's
+	// correlation ID (DIB-443): when the engine abandons the call (timeout,
+	// run terminated) its capability_provider_cancel fires this cancel so the
+	// handler can stop work instead of completing a write nobody will read.
+	ctx, cancel := context.WithCancel(context.Background())
+	gs.CapabilityCancelFuncs.Store(message.CorrelationID, cancel)
+	defer gs.CapabilityCancelFuncs.Delete(message.CorrelationID)
+	defer cancel()
+
+	respPayload, err := handler(ctx, message.Payload)
 	if err != nil {
 		sendCapabilityProviderErrorResponse(gs, fs, err.Error())
 		return
