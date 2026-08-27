@@ -44,6 +44,18 @@ func MarkerMemoryProvider() sdk.MemoryProvider {
 			log.Printf("memory provider: thread=%q msg=%q turns_in=%d budget=%d",
 				meta.ThreadID, currentMessage, len(turns), tokenBudget)
 
+			// Engine-asserted identity (DIB-445): OrgID/UserID/RunID/WorkflowID/
+			// NodeID are injected by workflow-server and cannot be spoofed —
+			// partition a persistent store on them, never on the caller-supplied
+			// ThreadID alone. UserID is nil on api-key runs.
+			if meta.OrgID != "" {
+				scope := meta.OrgID
+				if meta.UserID != nil {
+					scope += "/" + *meta.UserID
+				}
+				log.Printf("memory provider: store scope=%q run=%s", scope, meta.RunID)
+			}
+
 			marker := sdk.Turn{
 				Role: "assistant",
 				Parts: []sdk.Part{{
