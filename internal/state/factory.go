@@ -16,9 +16,9 @@ import (
 
 // CommunicationConfig holds configuration for communication setup
 type CommunicationConfig struct {
-	ServerName             string
-	GrpcServerAddress      string
-	ServerApiToken         string
+	ServerName        string
+	GrpcServerAddress string
+	ServerApiToken    string
 	// IdentityTokenFile: explicit projected-token path (DIB-202). Used only
 	// when ServerApiToken is empty; empty means probe the platform env var
 	// and default mount path.
@@ -40,11 +40,12 @@ type CommunicationConfig struct {
 // NewGlobalStateWithMode creates a GlobalState with the specified communication mode
 func NewGlobalStateWithMode(config CommunicationConfig) (*GlobalState, error) {
 	gs := &GlobalState{
-		ServerName:            config.ServerName,
-		Functions:             maps.NewSafeFunctionMap[string, basefunction.FunctionInterface](),
-		ResponseHandlers:      maps.NewSafeFunctionMap[string, chan *[]byte](),
-		ExecutionState:        maps.NewSafeFunctionMap[string, any](),
-		CapabilityCancelFuncs: maps.NewSafeFunctionMap[string, context.CancelFunc](),
+		ServerName:               config.ServerName,
+		Functions:                maps.NewSafeFunctionMap[string, basefunction.FunctionInterface](),
+		ResponseHandlers:         maps.NewSafeFunctionMap[string, chan *[]byte](),
+		ExecutionState:           maps.NewSafeFunctionMap[string, any](),
+		CapabilityCancelFuncs:    maps.NewSafeFunctionMap[string, context.CancelFunc](),
+		CancelledCapabilityCalls: maps.NewSafeFunctionMap[string, struct{}](),
 	}
 
 	var err error

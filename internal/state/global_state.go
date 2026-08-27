@@ -41,6 +41,15 @@ type GlobalState struct {
 	// Stored by the request dispatch, removed when the handler returns;
 	// invoked when the engine's capability_provider_cancel arrives.
 	CapabilityCancelFuncs *maps.SafeFunctionMap[string, context.CancelFunc]
+	// CancelledCapabilityCalls tombstones correlation IDs whose cancel arrived
+	// BEFORE the request dispatch stored a cancel func — possible because
+	// cancels dispatch direct while requests queue through the worker pool, so
+	// a request parked past the engine's per-call budget is overtaken by its
+	// own abandon notice. The dispatch checks (and consumes) the tombstone
+	// before running the handler, so an already-abandoned call is never
+	// executed. Entries are consumed by the dispatch; a request dropped
+	// entirely (queue full) leaks one small entry, which is acceptable.
+	CancelledCapabilityCalls *maps.SafeFunctionMap[string, struct{}]
 }
 
 // CapabilityProviderHandler decodes a capability_provider_request payload,

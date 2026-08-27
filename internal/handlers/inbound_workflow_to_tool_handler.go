@@ -104,7 +104,13 @@ func HandleIncomingWorkflow(gs *state.GlobalState) {
 		if cancel, ok := gs.CapabilityCancelFuncs.LoadAndDelete(message.CorrelationID); ok {
 			log.Printf("Capability provider call %s abandoned by engine: cancelling handler", message.CorrelationID)
 			cancel()
+			return
 		}
+		// No in-flight handler yet: the request is still parked in the worker
+		// pool queue (cancels dispatch direct, requests do not). Tombstone the
+		// correlation so the dispatch skips the handler when the abandoned
+		// request finally surfaces, instead of running work nobody will read.
+		gs.CancelledCapabilityCalls.Store(message.CorrelationID, struct{}{})
 	})
 
 	// Catalog pre-sync (DIB-152): a one-way push of the full stub set before
@@ -191,6 +197,14 @@ func handleCapabilityProviderRequest(gs *state.GlobalState, fs *state.EventState
 	if !ok || handler == nil {
 		sendCapabilityProviderErrorResponse(gs, fs,
 			fmt.Sprintf("capability provider %q for capability %q is not implemented by this server", req.Provider, req.Capability))
+		return
+	}
+
+	// A cancel that overtook this request (it was parked in the pool queue
+	// past the engine's per-call budget) left a tombstone — the engine has
+	// already abandoned the call, so don't run the handler at all.
+	if _, cancelled := gs.CancelledCapabilityCalls.LoadAndDelete(message.CorrelationID); cancelled {
+		log.Printf("Capability provider call %s was abandoned before dispatch: skipping handler", message.CorrelationID)
 		return
 	}
 
