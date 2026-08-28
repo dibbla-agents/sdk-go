@@ -133,8 +133,17 @@ type SelectResponse struct {
 // capability_provider_request targeting this provider. Returns nil when no
 // Select handler is declared, so the dispatcher can reply "not supported".
 func (p ToolSearchProvider) handler() state.CapabilityProviderHandler {
-	if p.Select == nil && p.SelectFull == nil {
-		return nil
+	// Normalize to the struct-shaped form once, so there is exactly one call
+	// path: a positional Select becomes a SelectFull that ignores extra ports.
+	full := p.SelectFull
+	if full == nil {
+		if p.Select == nil {
+			return nil
+		}
+		full = func(_ context.Context, req SelectRequest) (SelectResponse, error) {
+			selected, err := p.Select(req.Query, req.Stubs, req.TopN)
+			return SelectResponse{Selected: selected}, err
+		}
 	}
 	return func(ctx context.Context, reqPayload *[]byte) (*[]byte, error) {
 		var req types.CapabilityProviderRequest
@@ -144,26 +153,17 @@ func (p ToolSearchProvider) handler() state.CapabilityProviderHandler {
 			}
 		}
 		var resp types.CapabilityProviderResponse
-		if p.SelectFull != nil {
-			full, err := p.SelectFull(ctx, SelectRequest{
-				Query:       req.Query,
-				Stubs:       req.Stubs,
-				TopN:        req.TopN,
-				ExtraInputs: req.ExtraInputs,
-			})
-			if err != nil {
-				resp.Error = err.Error()
-			} else {
-				resp.Selected = full.Selected
-				resp.ExtraOutputs = full.ExtraOutputs
-			}
+		result, err := full(ctx, SelectRequest{
+			Query:       req.Query,
+			Stubs:       req.Stubs,
+			TopN:        req.TopN,
+			ExtraInputs: req.ExtraInputs,
+		})
+		if err != nil {
+			resp.Error = err.Error()
 		} else {
-			selected, err := p.Select(req.Query, req.Stubs, req.TopN)
-			if err != nil {
-				resp.Error = err.Error()
-			} else {
-				resp.Selected = selected
-			}
+			resp.Selected = result.Selected
+			resp.ExtraOutputs = result.ExtraOutputs
 		}
 		out, mErr := json.Marshal(resp)
 		if mErr != nil {
@@ -293,8 +293,18 @@ type TransformResponse struct {
 // capability_provider_request targeting this memory provider. Returns nil when
 // no Transform handler is declared, so the dispatcher can reply "not supported".
 func (p MemoryProvider) handler() state.CapabilityProviderHandler {
-	if p.Transform == nil && p.TransformFull == nil {
-		return nil
+	// Normalize to the struct-shaped form once, so there is exactly one call
+	// path: a positional Transform becomes a TransformFull that ignores
+	// extra ports.
+	full := p.TransformFull
+	if full == nil {
+		if p.Transform == nil {
+			return nil
+		}
+		full = func(ctx context.Context, req TransformRequest) (TransformResponse, error) {
+			turns, err := p.Transform(ctx, req.CurrentMessage, req.Turns, req.TokenBudget, req.Meta)
+			return TransformResponse{Turns: turns}, err
+		}
 	}
 	return func(ctx context.Context, reqPayload *[]byte) (*[]byte, error) {
 		var req types.MemoryTransformRequest
@@ -304,27 +314,18 @@ func (p MemoryProvider) handler() state.CapabilityProviderHandler {
 			}
 		}
 		var resp types.MemoryTransformResponse
-		if p.TransformFull != nil {
-			full, err := p.TransformFull(ctx, TransformRequest{
-				CurrentMessage: req.CurrentMessage,
-				Turns:          req.Turns,
-				TokenBudget:    req.TokenBudget,
-				Meta:           req.ThreadMeta,
-				ExtraInputs:    req.ExtraInputs,
-			})
-			if err != nil {
-				resp.Error = err.Error()
-			} else {
-				resp.Turns = full.Turns
-				resp.ExtraOutputs = full.ExtraOutputs
-			}
+		result, err := full(ctx, TransformRequest{
+			CurrentMessage: req.CurrentMessage,
+			Turns:          req.Turns,
+			TokenBudget:    req.TokenBudget,
+			Meta:           req.ThreadMeta,
+			ExtraInputs:    req.ExtraInputs,
+		})
+		if err != nil {
+			resp.Error = err.Error()
 		} else {
-			turns, err := p.Transform(ctx, req.CurrentMessage, req.Turns, req.TokenBudget, req.ThreadMeta)
-			if err != nil {
-				resp.Error = err.Error()
-			} else {
-				resp.Turns = turns
-			}
+			resp.Turns = result.Turns
+			resp.ExtraOutputs = result.ExtraOutputs
 		}
 		out, mErr := json.Marshal(resp)
 		if mErr != nil {
@@ -355,6 +356,26 @@ func (s *Server) RegisterCapabilityProvider(p CapabilityProvider) error {
 	def := p.definition()
 	if def.Name == "" {
 		return fmt.Errorf("capability provider name must not be empty")
+	}
+	// Declared extra ports (DIB-449) only work through the struct-shaped
+	// handlers: a positional Select/Transform can neither receive extra
+	// inputs nor return extra outputs, so a provider declaring schemas while
+	// implementing only the positional handler would have its wired inputs
+	// silently discarded and its output ports never produce — fail at
+	// startup instead. (No handler at all stays allowed: registered for
+	// binding, calls reply "not supported".)
+	declaresPorts := len(def.ExtraInputsSchema) > 0 || len(def.ExtraOutputsSchema) > 0
+	if declaresPorts {
+		switch sp := p.(type) {
+		case ToolSearchProvider:
+			if sp.Select != nil && sp.SelectFull == nil {
+				return fmt.Errorf("capability provider %s/%s declares extra ports but implements only the positional Select — implement SelectFull", def.Capability, def.Name)
+			}
+		case MemoryProvider:
+			if sp.Transform != nil && sp.TransformFull == nil {
+				return fmt.Errorf("capability provider %s/%s declares extra ports but implements only the positional Transform — implement TransformFull", def.Capability, def.Name)
+			}
+		}
 	}
 	// ":" would break the server's org-prefixed registry key, "/" its
 	// capability/name separator — the server skips such registrations.
