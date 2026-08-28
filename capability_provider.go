@@ -86,35 +86,84 @@ type ToolSearchProvider struct {
 	// entry. Select is a pure function, so it is straightforward to unit-test in
 	// isolation with fabricated stubs.
 	Select func(query string, stubs []ProviderStub, topN int) ([]string, error)
+	// SelectFull is the struct-shaped variant of Select (DIB-449). It receives
+	// the full request — including ExtraInputs, the resolved values of any
+	// declared extra input ports — and may return ExtraOutputs for declared
+	// extra output ports alongside the selection. When both SelectFull and
+	// Select are set, SelectFull wins. Prefer it for new providers; Select
+	// stays supported unchanged.
+	SelectFull func(ctx context.Context, req SelectRequest) (SelectResponse, error)
 	// WantsCatalogSync asks the server to push the function catalog ahead of
 	// run time (e.g. embedding-based scorers pre-indexing the pool).
 	WantsCatalogSync bool
 	// ExtraInputsSchema / ExtraOutputsSchema optionally declare additional
-	// node ports (JSON schema) surfaced when this provider is bound.
+	// node ports (JSON schema object with a top-level "properties" map;
+	// property names become port names, and a "required" list marks ports
+	// that gate execution). Surfaced as wireable ports on the capability
+	// node when this provider is bound (DIB-449). Values arrive in
+	// SelectRequest.ExtraInputs; output values are returned in
+	// SelectResponse.ExtraOutputs and published with the owning agent
+	// node's outputs.
 	ExtraInputsSchema  json.RawMessage
 	ExtraOutputsSchema json.RawMessage
+}
+
+// SelectRequest bundles everything the engine sends for one tool_search call
+// (DIB-449). Query/Stubs/TopN carry exactly what the positional Select handler
+// receives; ExtraInputs holds the resolved values of the provider's declared
+// extra input ports, keyed by port name (absent ports are simply missing keys).
+// ExtraInputs values are caller-wired and unauthenticated.
+type SelectRequest struct {
+	Query       string
+	Stubs       []ProviderStub
+	TopN        int
+	ExtraInputs map[string]any
+}
+
+// SelectResponse is what a SelectFull handler returns: the ordered subset of
+// offered stub names, plus optional ExtraOutputs values for the provider's
+// declared extra output ports. Keys not present in ExtraOutputsSchema are
+// dropped engine-side with a trace warning.
+type SelectResponse struct {
+	Selected     []string
+	ExtraOutputs map[string]any
 }
 
 // handler builds the generic invoke closure the dispatcher calls for a
 // capability_provider_request targeting this provider. Returns nil when no
 // Select handler is declared, so the dispatcher can reply "not supported".
 func (p ToolSearchProvider) handler() state.CapabilityProviderHandler {
-	if p.Select == nil {
-		return nil
+	// Normalize to the struct-shaped form once, so there is exactly one call
+	// path: a positional Select becomes a SelectFull that ignores extra ports.
+	full := p.SelectFull
+	if full == nil {
+		if p.Select == nil {
+			return nil
+		}
+		full = func(_ context.Context, req SelectRequest) (SelectResponse, error) {
+			selected, err := p.Select(req.Query, req.Stubs, req.TopN)
+			return SelectResponse{Selected: selected}, err
+		}
 	}
-	return func(_ context.Context, reqPayload *[]byte) (*[]byte, error) {
+	return func(ctx context.Context, reqPayload *[]byte) (*[]byte, error) {
 		var req types.CapabilityProviderRequest
 		if reqPayload != nil {
 			if err := json.Unmarshal(*reqPayload, &req); err != nil {
 				return nil, fmt.Errorf("tool_search provider request decode failed: %w", err)
 			}
 		}
-		selected, err := p.Select(req.Query, req.Stubs, req.TopN)
 		var resp types.CapabilityProviderResponse
+		result, err := full(ctx, SelectRequest{
+			Query:       req.Query,
+			Stubs:       req.Stubs,
+			TopN:        req.TopN,
+			ExtraInputs: req.ExtraInputs,
+		})
 		if err != nil {
 			resp.Error = err.Error()
 		} else {
-			resp.Selected = selected
+			resp.Selected = result.Selected
+			resp.ExtraOutputs = result.ExtraOutputs
 		}
 		out, mErr := json.Marshal(resp)
 		if mErr != nil {
@@ -189,6 +238,14 @@ type MemoryProvider struct {
 	// timeout lands in a thread the platform already failed). Handlers that
 	// ignore ctx keep working exactly as before, they just waste the effort.
 	Transform func(ctx context.Context, currentMessage string, turns []Turn, tokenBudget int, meta ThreadMeta) ([]Turn, error)
+	// TransformFull is the struct-shaped variant of Transform (DIB-449). It
+	// receives the full request — including ExtraInputs, the resolved values
+	// of any declared extra input ports — and may return ExtraOutputs for
+	// declared extra output ports alongside the turns. When both TransformFull
+	// and Transform are set, TransformFull wins. Prefer it for new providers;
+	// Transform stays supported unchanged. The same ctx-cancellation contract
+	// as Transform applies.
+	TransformFull func(ctx context.Context, req TransformRequest) (TransformResponse, error)
 	// MaxHistoryFraction optionally declares the share of the model's context
 	// window your returned history may occupy (DIB-154), e.g. 0.5 for half.
 	// The platform clamps it to a hard maximum (you may tune down freely, up
@@ -198,17 +255,56 @@ type MemoryProvider struct {
 	// never lifts the absolute byte cap, which is platform-owned and non-tunable.
 	MaxHistoryFraction float64
 	// ExtraInputsSchema / ExtraOutputsSchema optionally declare additional
-	// node ports (JSON schema) surfaced when this provider is bound.
+	// node ports (JSON schema object with a top-level "properties" map;
+	// property names become port names, and a "required" list marks ports
+	// that gate execution). Surfaced as wireable ports on the capability
+	// node when this provider is bound (DIB-449). Values arrive in
+	// TransformRequest.ExtraInputs; output values are returned in
+	// TransformResponse.ExtraOutputs and published with the owning agent
+	// node's outputs.
 	ExtraInputsSchema  json.RawMessage
 	ExtraOutputsSchema json.RawMessage
+}
+
+// TransformRequest bundles everything the engine sends for one memory
+// transform call (DIB-449). CurrentMessage/Turns/TokenBudget/Meta carry
+// exactly what the positional Transform handler receives; ExtraInputs holds
+// the resolved values of the provider's declared extra input ports, keyed by
+// port name. ExtraInputs values are caller-wired and unauthenticated —
+// identity stays in Meta (engine-asserted), never in a port.
+type TransformRequest struct {
+	CurrentMessage string
+	Turns          []Turn
+	TokenBudget    int
+	Meta           ThreadMeta
+	ExtraInputs    map[string]any
+}
+
+// TransformResponse is what a TransformFull handler returns: the turns to
+// inject (same contract as Transform's return), plus optional ExtraOutputs
+// values for the provider's declared extra output ports. Keys not present in
+// ExtraOutputsSchema are dropped engine-side with a trace warning.
+type TransformResponse struct {
+	Turns        []Turn
+	ExtraOutputs map[string]any
 }
 
 // handler builds the generic invoke closure the dispatcher calls for a
 // capability_provider_request targeting this memory provider. Returns nil when
 // no Transform handler is declared, so the dispatcher can reply "not supported".
 func (p MemoryProvider) handler() state.CapabilityProviderHandler {
-	if p.Transform == nil {
-		return nil
+	// Normalize to the struct-shaped form once, so there is exactly one call
+	// path: a positional Transform becomes a TransformFull that ignores
+	// extra ports.
+	full := p.TransformFull
+	if full == nil {
+		if p.Transform == nil {
+			return nil
+		}
+		full = func(ctx context.Context, req TransformRequest) (TransformResponse, error) {
+			turns, err := p.Transform(ctx, req.CurrentMessage, req.Turns, req.TokenBudget, req.Meta)
+			return TransformResponse{Turns: turns}, err
+		}
 	}
 	return func(ctx context.Context, reqPayload *[]byte) (*[]byte, error) {
 		var req types.MemoryTransformRequest
@@ -217,12 +313,19 @@ func (p MemoryProvider) handler() state.CapabilityProviderHandler {
 				return nil, fmt.Errorf("memory provider request decode failed: %w", err)
 			}
 		}
-		turns, err := p.Transform(ctx, req.CurrentMessage, req.Turns, req.TokenBudget, req.ThreadMeta)
 		var resp types.MemoryTransformResponse
+		result, err := full(ctx, TransformRequest{
+			CurrentMessage: req.CurrentMessage,
+			Turns:          req.Turns,
+			TokenBudget:    req.TokenBudget,
+			Meta:           req.ThreadMeta,
+			ExtraInputs:    req.ExtraInputs,
+		})
 		if err != nil {
 			resp.Error = err.Error()
 		} else {
-			resp.Turns = turns
+			resp.Turns = result.Turns
+			resp.ExtraOutputs = result.ExtraOutputs
 		}
 		out, mErr := json.Marshal(resp)
 		if mErr != nil {
@@ -253,6 +356,26 @@ func (s *Server) RegisterCapabilityProvider(p CapabilityProvider) error {
 	def := p.definition()
 	if def.Name == "" {
 		return fmt.Errorf("capability provider name must not be empty")
+	}
+	// Declared extra ports (DIB-449) only work through the struct-shaped
+	// handlers: a positional Select/Transform can neither receive extra
+	// inputs nor return extra outputs, so a provider declaring schemas while
+	// implementing only the positional handler would have its wired inputs
+	// silently discarded and its output ports never produce — fail at
+	// startup instead. (No handler at all stays allowed: registered for
+	// binding, calls reply "not supported".)
+	declaresPorts := len(def.ExtraInputsSchema) > 0 || len(def.ExtraOutputsSchema) > 0
+	if declaresPorts {
+		switch sp := p.(type) {
+		case ToolSearchProvider:
+			if sp.Select != nil && sp.SelectFull == nil {
+				return fmt.Errorf("capability provider %s/%s declares extra ports but implements only the positional Select — implement SelectFull", def.Capability, def.Name)
+			}
+		case MemoryProvider:
+			if sp.Transform != nil && sp.TransformFull == nil {
+				return fmt.Errorf("capability provider %s/%s declares extra ports but implements only the positional Transform — implement TransformFull", def.Capability, def.Name)
+			}
+		}
 	}
 	// ":" would break the server's org-prefixed registry key, "/" its
 	// capability/name separator — the server skips such registrations.
