@@ -67,6 +67,10 @@ type CapabilityProviderRequest struct {
 	Query      string         `json:"query"`
 	Stubs      []ProviderStub `json:"stubs"`
 	TopN       int            `json:"top_n"`
+	// ExtraInputs carries the resolved values of the provider's declared
+	// extra input ports (DIB-449), keyed by port name. Caller-wired and
+	// unauthenticated — never treat a value here as identity.
+	ExtraInputs map[string]any `json:"extra_inputs,omitempty"`
 }
 
 // CapabilityProviderResponse is the payload of a capability_provider_response
@@ -78,6 +82,11 @@ type CapabilityProviderResponse struct {
 	Selected []string `json:"selected,omitempty"`
 	Error    string   `json:"error,omitempty"`
 	Code     string   `json:"code,omitempty"`
+	// ExtraOutputs carries values for the provider's declared extra output
+	// ports (DIB-449), keyed by port name. Published with the owning agent
+	// node's outputs; keys not present in ExtraOutputsSchema are dropped
+	// engine-side.
+	ExtraOutputs map[string]any `json:"extra_outputs,omitempty"`
 }
 
 // CapabilityCatalog is the payload of the one-way capability_catalog pre-sync
@@ -222,6 +231,10 @@ type MemoryTransformRequest struct {
 	CurrentMessage string     `json:"current_message"`
 	TokenBudget    int        `json:"token_budget"`
 	ThreadMeta     ThreadMeta `json:"thread_meta"`
+	// ExtraInputs carries the resolved values of the provider's declared
+	// extra input ports (DIB-449), keyed by port name. Caller-wired and
+	// unauthenticated — identity stays in ThreadMeta, never in a port.
+	ExtraInputs map[string]any `json:"extra_inputs,omitempty"`
 }
 
 // MemoryTransformResponse is the payload of the capability_provider_response
@@ -232,4 +245,9 @@ type MemoryTransformResponse struct {
 	Turns []Turn `json:"turns,omitempty"`
 	Error string `json:"error,omitempty"`
 	Code  string `json:"code,omitempty"`
+	// ExtraOutputs carries values for the provider's declared extra output
+	// ports (DIB-449), keyed by port name. Published with the owning agent
+	// node's outputs; keys not present in ExtraOutputsSchema are dropped
+	// engine-side.
+	ExtraOutputs map[string]any `json:"extra_outputs,omitempty"`
 }
