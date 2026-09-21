@@ -1,6 +1,8 @@
 package sdk
 
 import (
+	"context"
+	"fmt"
 	"time"
 
 	"github.com/dibbla-agents/sdk-go/internal/basefunction"
@@ -77,11 +79,12 @@ func (f *Function[In, Out]) Build(gs *state.GlobalState) basefunction.FunctionIn
 
 // SimpleFunction provides an even simpler interface for functions that don't need event state or global state
 type SimpleFunction[In any, Out any] struct {
-	name        string
-	version     string
-	description string
-	handler     func(In) (Out, error)
-	tags        []string
+	name           string
+	version        string
+	description    string
+	handler        func(In) (Out, error)
+	contextHandler func(context.Context, In) (Out, error)
+	tags           []string
 }
 
 // NewSimpleFunction creates a function builder for simple input->output transformations
@@ -94,9 +97,28 @@ func NewSimpleFunction[In any, Out any](name, version, description string) *Simp
 	}
 }
 
-// WithHandler sets the simple function handler
+// WithHandler sets the simple function handler.
 func (f *SimpleFunction[In, Out]) WithHandler(handler func(In) (Out, error)) *SimpleFunction[In, Out] {
 	f.handler = handler
+	f.contextHandler = nil
+	return f
+}
+
+// WithContextHandler sets a handler that also receives a context carrying the
+// verified caller, readable with CallerFromContext. Use it whenever the
+// function authorizes per user, or needs to hand a context to the I/O it
+// performs.
+//
+// It replaces any handler set by WithHandler — a function has one handler, and
+// silently preferring one of two would make which code runs depend on call
+// order.
+//
+// The context is not cancellable today: the invocation path carries no
+// deadline, so it is a value carrier for now. Accepting it anyway is what lets
+// a deadline arrive later without changing this signature.
+func (f *SimpleFunction[In, Out]) WithContextHandler(handler func(context.Context, In) (Out, error)) *SimpleFunction[In, Out] {
+	f.contextHandler = handler
+	f.handler = nil
 	return f
 }
 
@@ -113,12 +135,22 @@ func (f *SimpleFunction[In, Out]) Build(gs *state.GlobalState) basefunction.Func
 		f.version,
 		f.description,
 		func(inputs In, eventState *types.EventMessage) (Out, error) {
-			// Simple handler ignores event state and global state
-			return f.handler(inputs)
+			switch {
+			case f.contextHandler != nil:
+				// The caller travels in the event's meta, outside the payload,
+				// so a caller cannot forge it by shaping its inputs.
+				return f.contextHandler(contextForEvent(eventState), inputs)
+			case f.handler != nil:
+				// Simple handler ignores event state and global state
+				return f.handler(inputs)
+			default:
+				// Registering a function with no handler is a wiring mistake.
+				// Answering with it beats a nil dereference that surfaces as a
+				// worker panic with no function name attached.
+				var zero Out
+				return zero, fmt.Errorf("function %q (version %s) was registered without a handler", f.name, f.version)
+			}
 		},
 		f.tags,
 	)
 }
-
-
-
