@@ -52,9 +52,26 @@ func TestGetTypeSchema(t *testing.T) {
 			expected: "string",
 		},
 		{
-			name:     "Nested array",
-			key:      "NestedArrayField[][]",
-			expected: "string",
+			// Changed 2026-09-21. This used to expect "NestedArrayField[][]",
+			// a key describing the innermost element. Nothing can send that:
+			// json.Unmarshal reads the field's json name, so the key a caller
+			// uses is "NestedArrayField" and its type is the array. The
+			// bracketed paths remain, but as a description of what is inside
+			// rather than as input keys.
+			name:     "Nested array is declared under its own name",
+			key:      "NestedArrayField",
+			expected: "[][]string",
+		},
+		{
+			name:     "Inner array is still described",
+			key:      "NestedArrayField[]",
+			expected: "[]string",
+		},
+		{
+			// The whole point of the change: a key the decoder will read.
+			name:     "Struct array is declared under its own name",
+			key:      "InnerStruct",
+			expected: "[]basefunction.TestInnerStruct",
 		},
 	}
 

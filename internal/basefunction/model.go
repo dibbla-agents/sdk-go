@@ -232,21 +232,38 @@ func processField(fieldType reflect.Type, path string, result map[string]interfa
 	}
 }
 
-// processArrayField handles array types
+// processArrayField handles array types.
+//
+// The field is declared under its own path — the key a caller sends and the
+// key json.Unmarshal reads — with an array type. The bracketed path is kept
+// only to DESCRIBE the shape of struct elements, which is what the notation
+// was always for.
+//
+// It used to declare the field at path+"[]" and nowhere else. Consumers read
+// the published schema as the list of input keys, so a field tagged
+// `json:"kinds"` was advertised as "kinds[]" and then never read, because the
+// decoder goes by the json tag. There was no spelling that worked: send what
+// the schema asks for and the value is silently discarded; send what the
+// decoder reads and validation rejects it as missing. Garden's toolserver lost
+// a kinds filter and every entity link that way, with no error on either side
+// (2026-09-21).
 func processArrayField(arrayType reflect.Type, path string, result map[string]interface{}) {
-	// Add [] suffix to the path
-	arrayPath := path + "[]"
-
 	// Get the element type
 	elemType := arrayType.Elem()
 	if elemType.Kind() == reflect.Ptr {
 		elemType = elemType.Elem()
 	}
 
-	// Process the element type
+	// The array itself, under the decodable key. Consumers map a leading "[]"
+	// onto JSON Schema's "array".
+	result[path] = "[]" + elemType.String()
+
+	// Add [] suffix to the path for describing what is INSIDE the array
+	arrayPath := path + "[]"
+
 	switch elemType.Kind() {
 	case reflect.Struct:
-		// For struct elements, recursively process the struct fields
+		// For struct elements, recursively describe the struct fields
 		buildSchema(elemType, arrayPath, result)
 	case reflect.Slice, reflect.Array:
 		// Special case: if the element type is a named type (like InnerInnerStruct in the example)
@@ -257,17 +274,12 @@ func processArrayField(arrayType reflect.Type, path string, result map[string]in
 			innerElemType := elemType.Elem()
 			if innerElemType.Kind() == reflect.Struct {
 				buildSchema(innerElemType, arrayPath, result)
-			} else {
-				// For primitive types in a named slice type
-				result[arrayPath] = innerElemType.String()
 			}
 		} else {
-			// For regular nested arrays, recursively process with the array path
+			// For regular nested arrays, describe the inner array under the
+			// bracketed path
 			processArrayField(elemType, arrayPath, result)
 		}
-	default:
-		// For primitive types, just add the type
-		result[arrayPath] = elemType.String()
 	}
 }
 
