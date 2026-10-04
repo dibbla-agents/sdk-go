@@ -13,10 +13,10 @@ func eventWithMeta(meta map[string]any) *types.EventMessage {
 }
 
 func TestCallerFromContext_absentWhenPlatformAssertedNothing(t *testing.T) {
-	// A workflow-run invocation carries no asserted identity. The contract is
-	// "no user", which a handler must be able to tell apart from a user whose
-	// fields happen to be blank — otherwise it would authorize an empty
-	// identity as if it were somebody.
+	// A call within a run no person triggered carries no asserted identity.
+	// The contract is "no user", which a handler must be able to tell apart
+	// from a user whose fields happen to be blank — otherwise it would
+	// authorize an empty identity as if it were somebody.
 	cases := map[string]*types.EventMessage{
 		"nil event":      nil,
 		"nil meta":       {},
@@ -217,4 +217,76 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// A call within a workflow run a person triggered (DIB-1276): the person and
+// the run are read, ok is true, IsWorkflowRunForUser is true and IsUser is
+// false — the person did not call the function directly.
+func TestCallerFromContext_workflowRunForAPerson(t *testing.T) {
+	c, ok := CallerFromContext(contextForEvent(eventWithMeta(map[string]any{
+		types.MetaKeyAssertedIdentity:  types.IdentityWorkflowRunUser,
+		types.MetaKeyAssertedUserID:    "u-1",
+		types.MetaKeyAssertedUserEmail: "anna@example.com",
+		types.MetaKeyAssertedUserName:  "Anna",
+		types.MetaKeyAssertedOrgID:     "org-1",
+		types.MetaKeyAssertedOrgRole:   "developer",
+		types.MetaKeyAssertedRunID:     "run-1",
+		types.MetaKeyAssertedWorkflow:  "meeting-summary",
+		types.MetaKeyAssertedTrigger:   "user",
+	})))
+	if !ok {
+		t.Fatal("an asserted workflow-run identity is a caller")
+	}
+	want := Caller{UserID: "u-1", Email: "anna@example.com", Name: "Anna", OrgID: "org-1", OrgRole: "developer",
+		Identity: IdentityWorkflowRunUser, RunID: "run-1", Workflow: "meeting-summary", Trigger: "user"}
+	if c != want {
+		t.Fatalf("caller = %+v\nwant %+v", c, want)
+	}
+	if c.IsUser() {
+		t.Fatal("a workflow run is not a user calling directly")
+	}
+	if !c.IsWorkflowRunForUser() {
+		t.Fatal("IsWorkflowRunForUser")
+	}
+}
+
+// IsWorkflowRunForUser needs the identity, a person and a run; nothing else
+// qualifies, and a direct user is not a workflow run.
+func TestCaller_IsWorkflowRunForUserRequiresIdentityPersonAndRun(t *testing.T) {
+	for name, c := range map[string]Caller{
+		"no person":      {Identity: IdentityWorkflowRunUser, RunID: "run-1"},
+		"no run":         {Identity: IdentityWorkflowRunUser, UserID: "u-1"},
+		"direct user":    {Identity: IdentityUserAuthenticated, UserID: "u-1", RunID: "run-1"},
+		"api key":        {Identity: IdentityAPIKey, UserID: "u-1", RunID: "run-1"},
+		"future mode":    {Identity: "some-future-mode", UserID: "u-1", RunID: "run-1"},
+		"nothing at all": {},
+	} {
+		if c.IsWorkflowRunForUser() {
+			t.Errorf("%s: IsWorkflowRunForUser is true", name)
+		}
+	}
+}
+
+// A function's inputs cannot make a call look like a workflow run.
+func TestSimpleFunction_workflowRunIsNotTakenFromInputs(t *testing.T) {
+	type spoofIn struct {
+		AssertedIdentity string `json:"asserted_identity"`
+		AssertedRunID    string `json:"asserted_run_id"`
+		AssertedUserID   string `json:"asserted_user_id"`
+	}
+	fn := NewSimpleFunction[spoofIn, callerOut]("search", "1.0.0", "").
+		WithContextHandler(func(ctx context.Context, in spoofIn) (callerOut, error) {
+			if c, ok := CallerFromContext(ctx); ok && c.IsWorkflowRunForUser() {
+				return callerOut{Seen: c.UserID}, nil
+			}
+			return callerOut{Seen: "anonymous"}, nil
+		}).
+		Build(nil)
+	got, err := execute(t, fn, `{"asserted_identity":"workflow-run-user","asserted_run_id":"run-1","asserted_user_id":"u-1"}`, eventWithMeta(map[string]any{}))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if want := `{"seen":"anonymous"}`; got != want {
+		t.Errorf("inputs became a workflow-run caller: got %s, want %s", got, want)
+	}
 }

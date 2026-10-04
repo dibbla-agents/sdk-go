@@ -234,6 +234,26 @@ fn := sdk.NewFunction[Input, Output](name, version, description)
     .WithCacheTTL(5 * time.Minute)
 ```
 
+### Who Is Calling (`Caller`)
+
+A function built with `WithContextHandler` can ask who the platform says is
+calling: `sdk.CallerFromContext(ctx)`. The values come from the invocation's
+metadata, set by the platform from a validated principal and never from the
+function's inputs, so a caller cannot claim an identity it does not hold.
+
+| `Caller.Identity` | Meaning | Check |
+|---|---|---|
+| `user-authenticated` | A signed-in person called the function directly (platform MCP, API or CLI). | `IsUser()` |
+| `workflow-run-user` | The call was made within a workflow run a person triggered. `UserID`/`Email`/`Name` describe that person; `RunID`, `Workflow` and `Trigger` the run. | `IsWorkflowRunForUser()` |
+| `api-key` | A machine credential called directly; no person. | — |
+| *(none — `ok` is false)* | No identity asserted, e.g. a run no person triggered. | — |
+
+`IsUser()` is true only for a person calling directly; a workflow run is not
+one. Whether to act for the person behind a run is the function's own
+decision — reading on their behalf may be fine where writing is not — so check
+`IsWorkflowRunForUser()` explicitly rather than treating any populated
+`Caller` as a user.
+
 ### Long-Running Jobs
 
 For long-running background tasks that need progress reporting and task tracking, use the Jobs subpackage. Jobs run asynchronously and can report progress, log messages, and track individual tasks.
