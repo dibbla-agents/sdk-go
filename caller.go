@@ -40,28 +40,57 @@ type Caller struct {
 	// IdentityUserAuthenticated. Compare against it rather than assuming any
 	// populated Caller is an interactive user — future modes will land here.
 	Identity string
+	// RunID, Workflow and Trigger are set for a call made within a workflow
+	// run (IdentityWorkflowRunUser): the run, its workflow's name, and what
+	// started it ("user", "mcp", or an origin such as "app").
+	RunID    string
+	Workflow string
+	Trigger  string
 }
 
 // IdentityUserAuthenticated means a signed-in user called the function
 // directly (platform MCP, API or CLI) and the Caller describes that person.
 const IdentityUserAuthenticated = types.IdentityUserAuthenticated
 
-// IsUser reports whether the call carries an authenticated end user. A
-// function that reads per-user data should refuse when this is false rather
-// than falling back to a default identity.
+// IdentityAPIKey means a machine credential called the function directly; no
+// person is behind the call.
+const IdentityAPIKey = types.IdentityAPIKey
+
+// IdentityWorkflowRunUser means the call was made within a workflow run that a
+// person triggered: the Caller describes that person and the run. The person
+// did not call the function themselves — a graph they ran did — so IsUser is
+// false; a function decides for itself whether to act for them
+// (IsWorkflowRunForUser).
+const IdentityWorkflowRunUser = types.IdentityWorkflowRunUser
+
+// IsUser reports whether the call carries an authenticated end user calling
+// directly. A function that reads per-user data should refuse when this is
+// false rather than falling back to a default identity. A workflow run is not
+// a user calling directly: see IsWorkflowRunForUser.
 func (c Caller) IsUser() bool {
 	return c.Identity == IdentityUserAuthenticated && c.UserID != ""
+}
+
+// IsWorkflowRunForUser reports whether the call was made within a workflow
+// run that the platform says a person triggered. Acting for that person is a
+// choice each function makes — reading may be fine where writing is not —
+// so this is deliberately separate from IsUser, and nothing here combines
+// the two.
+func (c Caller) IsWorkflowRunForUser() bool {
+	return c.Identity == IdentityWorkflowRunUser && c.UserID != "" && c.RunID != ""
 }
 
 type callerContextKey struct{}
 
 // CallerFromContext returns the verified caller for this invocation.
 //
-// ok is false when the platform asserted no identity — an invocation from
-// inside a workflow run, for instance, which executes under the workflow's own
-// authority rather than a live user's. Treat that as "no user", never as
-// "some default user": a handler that reads personal data should return an
-// error, and one that does not need identity can ignore the second return.
+// ok is false when the platform asserted no identity — a call within a
+// workflow run no person triggered, for instance. Treat that as "no user",
+// never as "some default user": a handler that reads personal data should
+// return an error, and one that does not need identity can ignore the second
+// return. ok is true for every asserted identity, including ones that are not
+// a person calling directly (IdentityWorkflowRunUser, IdentityAPIKey): check
+// IsUser or IsWorkflowRunForUser before acting for a person.
 func CallerFromContext(ctx context.Context) (Caller, bool) {
 	if ctx == nil {
 		return Caller{}, false
@@ -102,6 +131,9 @@ func callerFromEvent(msg *types.EventMessage) Caller {
 		OrgID:    str(types.MetaKeyAssertedOrgID),
 		OrgRole:  str(types.MetaKeyAssertedOrgRole),
 		Identity: str(types.MetaKeyAssertedIdentity),
+		RunID:    str(types.MetaKeyAssertedRunID),
+		Workflow: str(types.MetaKeyAssertedWorkflow),
+		Trigger:  str(types.MetaKeyAssertedTrigger),
 	}
 }
 

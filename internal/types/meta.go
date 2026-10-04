@@ -18,6 +18,12 @@ const (
 	MetaKeyAssertedUserEmail = "asserted_user_email"
 	MetaKeyAssertedUserName  = "asserted_user_name"
 	MetaKeyAssertedOrgRole   = "asserted_org_role"
+
+	// Added for calls made WITHIN a workflow run (DIB-1276): the run the call
+	// belongs to, its workflow's name, and what started the run.
+	MetaKeyAssertedRunID    = "asserted_run_id"
+	MetaKeyAssertedWorkflow = "asserted_workflow"
+	MetaKeyAssertedTrigger  = "asserted_trigger"
 )
 
 // Values MetaKeyAssertedIdentity can take.
@@ -26,4 +32,13 @@ const (
 	// directly (platform MCP, API or CLI). The asserted user fields describe
 	// that person.
 	IdentityUserAuthenticated = "user-authenticated"
+	// IdentityAPIKey: a machine credential called the function directly; no
+	// person is behind it.
+	IdentityAPIKey = "api-key"
+	// IdentityWorkflowRunUser: the call was made within a workflow run a
+	// person triggered (DIB-1276). The asserted user fields describe that
+	// person, and the run fields the run. Deliberately not
+	// user-authenticated: the person did not call the function, a graph
+	// they ran did.
+	IdentityWorkflowRunUser = "workflow-run-user"
 )
