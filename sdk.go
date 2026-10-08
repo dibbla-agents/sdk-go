@@ -299,11 +299,7 @@ func (s *Server) registerJobs() {
 		params := handler.GetParameters()
 		paramMap := make(map[string]interface{})
 		for _, p := range params {
-			paramMap[p.Name] = map[string]interface{}{
-				"type":     p.Type,
-				"required": p.Required,
-				"default":  p.Default,
-			}
+			paramMap[p.Name] = p.Schema()
 		}
 
 		jobSchemas[handler.GetJobID()] = map[string]interface{}{
