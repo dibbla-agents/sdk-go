@@ -15,12 +15,66 @@ const (
 	StatusSkipped    JobStatus = "skipped"
 )
 
-// JobParameter describes a parameter for a job
+// JobParameter describes a parameter for a job.
+//
+// Name, Type, Required and Default are what every SDK version sends. The
+// optional fields below (DIB-1379) let the console render the right input and
+// refuse a wrong value before a pipeline is saved, instead of the job failing
+// when it runs. A workflow server that doesn't know them ignores them.
 type JobParameter struct {
 	Name     string      `json:"name"`
 	Type     string      `json:"type"`
 	Required bool        `json:"required"`
 	Default  interface{} `json:"default,omitempty"`
+
+	// Description says what the parameter is for, shown under its field.
+	Description string `json:"description,omitempty"`
+	// Options, when set, are the only allowed values (shown as a select).
+	Options []interface{} `json:"options,omitempty"`
+	// Format refines a string parameter: one of the Format* constants.
+	Format string `json:"format,omitempty"`
+	// Min and Max bound a number parameter, inclusive.
+	Min *float64 `json:"min,omitempty"`
+	Max *float64 `json:"max,omitempty"`
+}
+
+// Formats a string parameter can declare.
+const (
+	FormatDate     = "date"     // YYYY-MM-DD
+	FormatDateTime = "datetime" // RFC 3339, e.g. 2026-10-01T06:00:00Z
+	FormatURL      = "url"      // http(s)://…
+	FormatEmail    = "email"
+	FormatList     = "list" // a list of strings; the job receives []interface{}
+	FormatJSON     = "json" // any JSON value; the job receives it decoded
+)
+
+// Bound returns a pointer to v, for JobParameter.Min and Max.
+func Bound(v float64) *float64 { return &v }
+
+// Schema is the parameter as the job registration sends it: the keys the
+// workflow server reads, with the optional ones only when set.
+func (p JobParameter) Schema() map[string]interface{} {
+	m := map[string]interface{}{
+		"type":     p.Type,
+		"required": p.Required,
+		"default":  p.Default,
+	}
+	if p.Description != "" {
+		m["description"] = p.Description
+	}
+	if len(p.Options) > 0 {
+		m["options"] = p.Options
+	}
+	if p.Format != "" {
+		m["format"] = p.Format
+	}
+	if p.Min != nil {
+		m["min"] = *p.Min
+	}
+	if p.Max != nil {
+		m["max"] = *p.Max
+	}
+	return m
 }
 
 // JobHandler is the interface that job implementations must satisfy

@@ -29,9 +29,9 @@ func (j *DataProcessingJob) GetJobName() string {
 // GetParameters returns the parameters this job accepts.
 func (j *DataProcessingJob) GetParameters() []jobs.JobParameter {
 	return []jobs.JobParameter{
-		{Name: "source", Type: "string", Required: true},
-		{Name: "destination", Type: "string", Required: true},
-		{Name: "batch_size", Type: "integer", Required: false, Default: 100},
+		{Name: "source", Type: "string", Required: true, Format: jobs.FormatURL, Description: "Where to read records from"},
+		{Name: "destination", Type: "string", Required: true, Options: []interface{}{"warehouse", "archive"}},
+		{Name: "batch_size", Type: "integer", Required: false, Default: 100, Min: jobs.Bound(1), Max: jobs.Bound(10000)},
 		{Name: "validate", Type: "boolean", Required: false, Default: true},
 		{Name: "dry_run", Type: "boolean", Required: false, Default: false},
 	}

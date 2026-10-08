@@ -304,8 +304,11 @@ func (j *DataProcessingJob) GetJobName() string { return "Data Processing Job" }
 
 func (j *DataProcessingJob) GetParameters() []jobs.JobParameter {
     return []jobs.JobParameter{
-        {Name: "source", Type: "string", Required: true},
-        {Name: "batch_size", Type: "integer", Required: false, Default: 100},
+        {Name: "source", Type: "string", Required: true, Format: jobs.FormatURL,
+            Description: "Where to read records from"},
+        {Name: "batch_size", Type: "integer", Required: false, Default: 100,
+            Min: jobs.Bound(1), Max: jobs.Bound(10000)},
+        {Name: "mode", Type: "string", Options: []interface{}{"full", "incremental"}},
     }
 }
 
@@ -334,6 +337,14 @@ func (j *DataProcessingJob) Execute(ctx *jobs.JobContext) error {
     return nil
 }
 ```
+
+Besides name, type, required and default, a parameter can declare
+`Description`, `Options` (the only allowed values), `Format` (`FormatDate`,
+`FormatDateTime`, `FormatURL`, `FormatEmail`, `FormatList`, `FormatJSON`) and
+`Min`/`Max` for numbers. The console's New pipeline form renders the matching
+input and refuses a wrong value before the pipeline is saved; the workflow
+server checks the same rules on save. All of them are optional, and an older
+workflow server ignores them.
 
 #### Job Context
 
