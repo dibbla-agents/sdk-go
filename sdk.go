@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -292,6 +293,26 @@ func (s *Server) Start() error {
 	select {}
 }
 
+// jobRegistrationSchema is what one job's registration says about it: name,
+// parameters and, when the job implements jobs.DatabaseWriter, the database
+// it writes to (DIB-1383).
+func jobRegistrationSchema(handler jobs.JobHandler) map[string]interface{} {
+	paramMap := make(map[string]interface{})
+	for _, p := range handler.GetParameters() {
+		paramMap[p.Name] = p.Schema()
+	}
+	schema := map[string]interface{}{
+		"name":       handler.GetJobName(),
+		"parameters": paramMap,
+	}
+	if w, ok := handler.(jobs.DatabaseWriter); ok {
+		if db := strings.TrimSpace(w.WritesToDatabase()); db != "" {
+			schema["writes_to"] = db
+		}
+	}
+	return schema
+}
+
 // registerJobs sends job registration event to the workflow server
 func (s *Server) registerJobs() {
 	if len(s.jobs) == 0 {
@@ -303,16 +324,7 @@ func (s *Server) registerJobs() {
 	jobIDs := make([]string, 0, len(s.jobs))
 
 	for _, handler := range s.jobs {
-		params := handler.GetParameters()
-		paramMap := make(map[string]interface{})
-		for _, p := range params {
-			paramMap[p.Name] = p.Schema()
-		}
-
-		jobSchemas[handler.GetJobID()] = map[string]interface{}{
-			"name":       handler.GetJobName(),
-			"parameters": paramMap,
-		}
+		jobSchemas[handler.GetJobID()] = jobRegistrationSchema(handler)
 		jobIDs = append(jobIDs, handler.GetJobID())
 	}
 

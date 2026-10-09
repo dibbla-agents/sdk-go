@@ -37,6 +37,10 @@ func (j *DataProcessingJob) GetParameters() []jobs.JobParameter {
 	}
 }
 
+// WritesToDatabase names the database this job writes to (jobs.DatabaseWriter),
+// so the console can show it — and its app — as the pipeline's target.
+func (j *DataProcessingJob) WritesToDatabase() string { return "analytics" }
+
 // Execute runs the data processing pipeline.
 func (j *DataProcessingJob) Execute(ctx *jobs.JobContext) error {
 	// Extract arguments with defaults

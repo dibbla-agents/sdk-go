@@ -86,6 +86,16 @@ type JobHandler interface {
 	GetParameters() []JobParameter
 }
 
+// DatabaseWriter is optionally implemented by a JobHandler to say which of the
+// organization's managed databases the job writes to (DIB-1383). The name is
+// sent with the job's registration; the console shows it, with the app that
+// owns the database, as "Writes to" for every pipeline running the job. It is
+// a fact about the job's code, not a setting: the job still connects the way
+// it already does. A job that does not implement it shows "—".
+type DatabaseWriter interface {
+	WritesToDatabase() string
+}
+
 // JobEventMeta defines the structured metadata for job events
 // This schema is shared with the server
 type JobEventMeta struct {
