@@ -346,6 +346,22 @@ input and refuses a wrong value before the pipeline is saved; the workflow
 server checks the same rules on save. All of them are optional, and an older
 workflow server ignores them.
 
+#### The database a job writes to
+
+A job says which of the organization's managed databases it writes to by
+implementing `jobs.DatabaseWriter`:
+
+```go
+func (j *DataProcessingJob) WritesToDatabase() string { return "community_feedback" }
+```
+
+The name is sent with the job's registration. The console's Pipelines list,
+detail page and run panel then show **Writes to** — the database and the app
+that owns it — for every pipeline that runs the job, so the next developer
+sees where the data goes without asking. It describes the job's code; the job
+still connects the way it already does. A job without it shows "—", and an
+older workflow server ignores it.
+
 #### Job Context
 
 The `JobContext` provides:

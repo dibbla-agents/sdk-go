@@ -26,6 +26,7 @@ A complex data processing pipeline demonstrating:
 - Different log levels (`Info`, `Warn`, `Error`)
 - Dry-run mode support
 - Comprehensive progress reporting across phases
+- Saying which database it writes to (`WritesToDatabase`), shown in the console as the pipeline's target
 
 **Parameters:**
 - `source` (string, required): Data source location
