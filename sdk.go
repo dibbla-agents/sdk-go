@@ -1,9 +1,12 @@
 package sdk
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/dibbla-agents/sdk-go/internal/basefunction"
@@ -26,6 +29,10 @@ type Server struct {
 	jobs                []jobs.JobHandler
 	capabilityProviders []types.CapabilityProviderDefinition
 	capabilityHandlers  map[string]state.CapabilityProviderHandler
+
+	// runningJobs maps run ID → cancel func of a job executing on this worker,
+	// so a job_cancel from the server can stop it (DIB-1381).
+	runningJobs sync.Map
 }
 
 // New creates a new SDK server instance with the provided options
@@ -333,6 +340,22 @@ func (s *Server) registerJobs() {
 // dropped by) a saturated function-request pool.
 func (s *Server) registerJobTriggerHandler() {
 	s.globalState.Dispatcher.RegisterDirect(types.EventJobTrigger, s.handleJobTrigger)
+	// Direct as well: a stop parked behind the work it should stop is useless.
+	s.globalState.Dispatcher.RegisterDirect(types.EventJobCancel, s.handleJobCancel)
+}
+
+// handleJobCancel stops a running job: its JobContext is cancelled, and the
+// job reports job_cancelled once Execute returns. A run this worker does not
+// know (already finished, or never ran here) is ignored — the server only
+// learns the outcome from the job's own terminal event.
+func (s *Server) handleJobCancel(msg *types.EventMessage) {
+	v, ok := s.runningJobs.Load(msg.Run)
+	if !ok {
+		log.Printf("Received job cancel for run_id=%s, which is not running here; ignoring", msg.Run)
+		return
+	}
+	log.Printf("Received job cancel: run_id=%s", msg.Run)
+	v.(context.CancelCauseFunc)(jobs.ErrRunCancelled)
 }
 
 // handleJobTrigger processes incoming job_trigger events from the server
@@ -373,19 +396,37 @@ func (s *Server) executeJob(runID, jobID, jobName string, args map[string]interf
 
 	// Create job context with logger
 	logger := s.createJobLogger(runID, jobID, jobName)
-	ctx := &jobs.JobContext{
+	runCtx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	ctx := (&jobs.JobContext{
 		RunID:   runID,
 		JobID:   jobID,
 		JobName: jobName,
 		Args:    args,
 		Logger:  logger,
-	}
+	}).WithContext(runCtx)
+
+	// Registered before job_started: the server only offers Stop for a run it
+	// has seen start, so a cancel can never arrive before this entry exists.
+	s.runningJobs.Store(runID, cancel)
+	defer s.runningJobs.Delete(runID)
 
 	// Send job_started event
 	s.sendJobStarted(runID, jobID, jobName)
 
 	// Execute the job
-	if err := handler.Execute(ctx); err != nil {
+	err := handler.Execute(ctx)
+
+	// Stopped on request: whatever Execute returned (usually ctx.Err()), the
+	// run ends as cancelled, not failed — the person who pressed Stop asked
+	// for exactly this.
+	if errors.Is(context.Cause(runCtx), jobs.ErrRunCancelled) {
+		log.Printf("Job cancelled: job_id=%s, run_id=%s", jobID, runID)
+		s.sendJobCancelled(runID, jobID, jobName, err)
+		return
+	}
+
+	if err != nil {
 		log.Printf("Job failed: job_id=%s, run_id=%s, error=%v", jobID, runID, err)
 		s.sendJobFailed(runID, jobID, jobName, err)
 		return
@@ -466,6 +507,29 @@ func (s *Server) sendJobFailed(runID, jobID, jobName string, err error) {
 
 	if err := s.globalState.WorkflowComm.SendEvent(event); err != nil {
 		log.Printf("Failed to send job_failed event: %v", err)
+	}
+}
+
+// sendJobCancelled sends job_cancelled: the job stopped after a cancel.
+// jobErr is what Execute returned, if anything, kept for the run's record.
+func (s *Server) sendJobCancelled(runID, jobID, jobName string, jobErr error) {
+	meta := jobs.NewJobEventMeta(jobID, jobName)
+	meta.Status = string(jobs.StatusCancelled)
+	if jobErr != nil && !errors.Is(jobErr, context.Canceled) && !errors.Is(jobErr, jobs.ErrRunCancelled) {
+		meta.Error = jobErr.Error()
+	}
+	metaMap := meta.ToMap()
+
+	event := &types.EventMessage{
+		Server:        s.globalState.ServerName,
+		Event:         types.EventJobCancelled,
+		Run:           runID,
+		CorrelationID: runID,
+		Meta:          &metaMap,
+	}
+
+	if err := s.globalState.WorkflowComm.SendEvent(event); err != nil {
+		log.Printf("Failed to send job_cancelled event: %v", err)
 	}
 }
 

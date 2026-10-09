@@ -354,6 +354,54 @@ The `JobContext` provides:
 - `Args` - Arguments passed when the job was triggered
 - `Logger` - Logger for sending events via gRPC
 - Helper methods: `GetStringArg()`, `GetIntArg()`, `GetBoolArg()`, `GetFloat64Arg()`
+- The stop signal: `JobContext` is a `context.Context` (`Done()`, `Err()`, plus `Context()` and `IsCancelled()`)
+
+#### Stopping a Run (Cancel)
+
+A run can be stopped from the console (Stop on a running run) or the API
+(`POST /api/pipelines/:id/runs/:run_id/cancel`). The workflow server marks the
+run `cancelling` and sends the worker a `job_cancel` event; the SDK then
+cancels the job's `JobContext`. When `Execute` returns, the SDK reports
+`job_cancelled` and the run ends as `cancelled` (not `failed`). The next
+scheduled run starts as usual.
+
+A job stops within seconds if it listens to the signal. Pass `ctx` to anything
+that takes a `context.Context`, wrap waits in a `select`, and check between
+units of work — before the next write:
+
+```go
+func (j *SyncJob) Execute(ctx *jobs.JobContext) error {
+    rows, err := fetch(ctx)            // ctx is a context.Context
+    if err != nil {
+        return err
+    }
+    for i, row := range rows {
+        if ctx.IsCancelled() {         // stop before writing the next row
+            ctx.Logger.Warn(fmt.Sprintf("Stopped after %d of %d rows", i, len(rows)))
+            return ctx.Err()
+        }
+        if err := db.ExecContext(ctx, insertSQL, row.Values()...); err != nil {
+            return err
+        }
+    }
+    return nil
+}
+
+// Waits: return early on a stop.
+select {
+case <-ctx.Done():
+    return ctx.Err()
+case <-time.After(5 * time.Second):
+}
+```
+
+`context.Cause(ctx.Context())` is `jobs.ErrRunCancelled` when the stop came
+from a person. See `jobs/examples/simple_job.go` for a complete job.
+
+The change is backwards compatible: jobs written before it compile and run
+unchanged. A job that never looks at `ctx` runs to the end; because a stop was
+asked for, the run is still recorded as `cancelled`. An older SDK ignores
+`job_cancel`, so its run finishes as completed or failed.
 
 #### Logger Methods
 

@@ -29,30 +29,47 @@ func (j *SimpleJob) GetJobName() string {
 func (j *SimpleJob) GetParameters() []jobs.JobParameter {
 	return []jobs.JobParameter{
 		{Name: "message", Type: "string", Required: false, Default: "Hello from SimpleJob"},
+		{Name: "records", Type: "integer", Required: false, Default: 20},
 	}
 }
 
 // Execute runs the job with the given context.
 // The context provides access to arguments, logger, and run information.
+//
+// It also shows how a job honours Stop: ctx is a context.Context that is
+// cancelled when someone stops the run in the console. Waits go through
+// sleep (below), which returns early on a stop, and the loop checks between
+// records, so the job stops within one record instead of finishing the run.
+// Returning ctx.Err() ends the run as "cancelled".
 func (j *SimpleJob) Execute(ctx *jobs.JobContext) error {
 	message := ctx.GetStringArg("message", "Hello from SimpleJob")
+	total := ctx.GetIntArg("records", 20)
 
 	ctx.Logger.Info(fmt.Sprintf("Starting simple job with message: %s", message))
 
 	// Task 1: Fetch Data
 	ctx.Logger.TaskStarted("fetch_data")
 	ctx.Logger.Info("Fetching data from external source...")
-	time.Sleep(1 * time.Second) // Simulate API call
-	ctx.Logger.Info("Successfully fetched 100 records")
+	if err := sleep(ctx, 1*time.Second); err != nil { // Simulate API call
+		return err
+	}
+	ctx.Logger.Info(fmt.Sprintf("Successfully fetched %d records", total))
 	ctx.Logger.TaskCompleted()
 
 	// Task 2: Process Data with Progress
 	ctx.Logger.TaskStarted("process_data")
 	ctx.Logger.Info("Processing fetched data...")
 
-	total := 20
 	for i := 1; i <= total; i++ {
-		time.Sleep(100 * time.Millisecond) // Simulate work
+		// Check between units of work: stop before writing the next record.
+		if ctx.IsCancelled() {
+			ctx.Logger.Warn(fmt.Sprintf("Stopped after %d of %d records", i-1, total))
+			return ctx.Err()
+		}
+		if err := sleep(ctx, 100*time.Millisecond); err != nil { // Simulate work
+			ctx.Logger.Warn(fmt.Sprintf("Stopped after %d of %d records", i-1, total))
+			return err
+		}
 		ctx.Logger.Progress(i, total, fmt.Sprintf("Processing record %d/%d", i, total))
 	}
 	ctx.Logger.CompleteProgress()
@@ -62,12 +79,25 @@ func (j *SimpleJob) Execute(ctx *jobs.JobContext) error {
 	// Task 3: Save Results
 	ctx.Logger.TaskStarted("save_results")
 	ctx.Logger.Info("Saving results...")
-	time.Sleep(500 * time.Millisecond) // Simulate database write
-	ctx.Logger.Info("Successfully saved 100 records")
+	if err := sleep(ctx, 500*time.Millisecond); err != nil { // Simulate database write
+		return err
+	}
+	ctx.Logger.Info(fmt.Sprintf("Successfully saved %d records", total))
 	ctx.Logger.TaskCompleted()
 
 	ctx.Logger.Info("Simple job completed successfully!")
 	return nil
+}
+
+// sleep waits for d, or returns ctx.Err() as soon as the run is stopped.
+// Use the same select around any wait in your own jobs.
+func sleep(ctx *jobs.JobContext, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
+	}
 }
 
 // ExampleSimpleJobUsage shows how to register and use SimpleJob.

@@ -171,7 +171,8 @@ func isWorkflowOptionalEvent(event string) bool {
 		types.EventCapabilityProviderRequest,
 		types.EventCapabilityProviderCancel,
 		types.EventCapabilityCatalog,
-		types.EventJobTrigger:
+		types.EventJobTrigger,
+		types.EventJobCancel:
 		return true
 	default:
 		return false
