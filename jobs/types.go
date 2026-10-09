@@ -13,6 +13,7 @@ const (
 	StatusCompleted  JobStatus = "completed"
 	StatusFailed     JobStatus = "failed"
 	StatusSkipped    JobStatus = "skipped"
+	StatusCancelled  JobStatus = "cancelled"
 )
 
 // JobParameter describes a parameter for a job.

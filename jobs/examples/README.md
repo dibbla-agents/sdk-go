@@ -11,9 +11,11 @@ A basic job demonstrating:
 - Multiple task execution with `TaskStarted`/`TaskCompleted`
 - Progress reporting with `Progress()`
 - Basic logging with `Info()`
+- Honouring Stop: every wait returns early and the loop checks `ctx.IsCancelled()` before the next record, so a stopped run ends within ~100 ms as `cancelled`
 
 **Parameters:**
 - `message` (string, optional): Custom message to display
+- `records` (integer, optional, default: 20): Records to process (100 ms each) — set e.g. 600 for a one-minute run to try Stop on
 
 ### DataProcessingJob (`data_processing_job.go`)
 

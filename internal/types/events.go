@@ -92,4 +92,11 @@ const (
 	EventTaskSkipped     = "task_skipped"
 	EventLogMessage      = "log_message"
 	EventProgressUpdate  = "progress_update"
+
+	// EventJobCancel is the server asking a running job to stop (DIB-1381):
+	// someone pressed Stop. The SDK cancels the job's JobContext.
+	EventJobCancel = "job_cancel"
+	// EventJobCancelled is the worker's answer: the job stopped after a
+	// cancel. It is the run's terminal event, instead of completed/failed.
+	EventJobCancelled = "job_cancelled"
 )
