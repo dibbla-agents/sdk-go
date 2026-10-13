@@ -3,6 +3,8 @@ package sdk
 import (
 	"os"
 	"strconv"
+
+	"github.com/dibbla-agents/sdk-go/internal/communication"
 )
 
 // Config holds the configuration for the SDK server
@@ -12,7 +14,11 @@ type Config struct {
 
 	// Communication configuration
 	CommunicationMode string // will be forced to "grpc"
-	GrpcServerAddress string // Address of the gRPC workflow server
+	// GrpcServerAddress is the gRPC workflow server. Precedence:
+	// WithGrpcServerAddress, then GRPC_SERVER_ADDRESS, then
+	// DIBBLA_GRPC_SERVER_ADDRESS (set by the Dibbla platform to the install
+	// the worker is deployed on, DIB-1430), then grpc.dibbla.com:443.
+	GrpcServerAddress string
 	ServerApiToken    string // API token for authentication
 	// IdentityTokenFile points at a projected workload-identity token file
 	// (DIB-202). Precedence: ServerApiToken (explicit key) wins; otherwise
@@ -22,7 +28,10 @@ type Config struct {
 	// (re)connect, following kubelet rotation.
 	IdentityTokenFile string
 	OrgID             string // optional: pin registration to a specific org (multi-org users)
-	GrpcUseTLS        *bool  // nil = auto-detect based on address
+	// GrpcUseTLS: WithGrpcTLS or GRPC_USE_TLS. nil = the platform's
+	// DIBBLA_GRPC_USE_TLS when GrpcServerAddress is the platform's address,
+	// otherwise auto-detect based on address.
+	GrpcUseTLS *bool
 	// GrpcTLSInsecureSkipVerify disables TLS certificate verification. Only
 	// takes effect when TLS is in use. Insecure: keeps the connection encrypted
 	// but does not validate the server certificate. Use only for self-signed or
@@ -42,6 +51,13 @@ type Config struct {
 	// defaults (5m / 20s). See WithGrpcKeepalive for constraints.
 	GrpcKeepaliveTimeSec    int
 	GrpcKeepaliveTimeoutSec int
+
+	// platformGrpcAddress and platformGrpcUseTLS remember the platform's
+	// DIBBLA_GRPC_SERVER_ADDRESS / DIBBLA_GRPC_USE_TLS when the address came
+	// from there, so the TLS hint applies to that address only — never to one
+	// chosen with an option (which clears them) or set on the Config later.
+	platformGrpcAddress string
+	platformGrpcUseTLS  *bool
 }
 
 // Option is a functional option for configuring the SDK
@@ -52,16 +68,16 @@ func defaultConfig() *Config {
 	serverName := getEnvWithDefault("SERVER_NAME", "codex-go-worker")
 	codexEnvPath := getEnvWithDefault("CODEX_ENV_PATH", "")
 	communicationMode := getEnvWithDefault("COMMUNICATION_MODE", "grpc")
-	grpcServerAddress := getEnvWithDefault("GRPC_SERVER_ADDRESS", "grpc.dibbla.com:443")
+	// GRPC_SERVER_ADDRESS, else the platform's DIBBLA_GRPC_SERVER_ADDRESS,
+	// else grpc.dibbla.com:443; GRPC_USE_TLS, and the platform's TLS hint.
+	endpoint := communication.EndpointFromEnv()
 	serverApiToken := getEnvWithDefault("SERVER_API_TOKEN", "")
 	identityTokenFile := getEnvWithDefault("DIBBLA_IDENTITY_TOKEN_FILE", "")
 	orgID := getEnvWithDefault("SERVER_ORG_ID", "")
-	
-	// TLS configuration with auto-detection
-	var defaultTLS *bool = nil
-	if tlsEnv := os.Getenv("GRPC_USE_TLS"); tlsEnv != "" {
-		val := (tlsEnv == "true" || tlsEnv == "1")
-		defaultTLS = &val
+
+	var platformGrpcAddress string
+	if endpoint.FromPlatform {
+		platformGrpcAddress = endpoint.Address
 	}
 
 	// TLS certificate verification can be skipped via env (insecure)
@@ -69,7 +85,7 @@ func defaultConfig() *Config {
 	if v := os.Getenv("GRPC_TLS_INSECURE_SKIP_VERIFY"); v == "true" || v == "1" {
 		insecureSkipVerify = true
 	}
-	
+
 	// HTTP/2 keepalive tuning via env (0 = SDK defaults). Lets deployed
 	// workers opt into faster dead-connection detection without a rebuild.
 	keepaliveTime := getEnvIntWithDefault("GRPC_KEEPALIVE_TIME_SEC", 0)
@@ -86,11 +102,11 @@ func defaultConfig() *Config {
 		ServerName:                 serverName,
 		CodexEnvPath:               codexEnvPath,
 		CommunicationMode:          communicationMode,
-		GrpcServerAddress:          grpcServerAddress,
+		GrpcServerAddress:          endpoint.Address,
 		ServerApiToken:             serverApiToken,
 		IdentityTokenFile:          identityTokenFile,
 		OrgID:                      orgID,
-		GrpcUseTLS:                 defaultTLS,
+		GrpcUseTLS:                 endpoint.UseTLS,
 		GrpcTLSInsecureSkipVerify:  insecureSkipVerify,
 		HandlersConcurrency:        handlersConcurrency,
 		IncomingEventsBuffer:       incomingBuffer,
@@ -99,7 +115,30 @@ func defaultConfig() *Config {
 		PingIntervalSec:            pingInterval,
 		GrpcKeepaliveTimeSec:       keepaliveTime,
 		GrpcKeepaliveTimeoutSec:    keepaliveTimeout,
+		platformGrpcAddress:        platformGrpcAddress,
+		platformGrpcUseTLS:         endpoint.PlatformUseTLS,
 	}
+}
+
+// grpcUseTLS is the TLS choice the worker connects with: WithGrpcTLS or
+// GRPC_USE_TLS, else the platform's DIBBLA_GRPC_USE_TLS while the address is
+// still the platform's. nil = auto-detect based on address.
+func (c *Config) grpcUseTLS() *bool {
+	if c.GrpcUseTLS != nil {
+		return c.GrpcUseTLS
+	}
+	if c.platformGrpcAddress != "" && c.GrpcServerAddress == c.platformGrpcAddress {
+		return c.platformGrpcUseTLS
+	}
+	return nil
+}
+
+// chooseGrpcServerAddress records an address the user chose, which the
+// platform's TLS hint does not describe.
+func (c *Config) chooseGrpcServerAddress(address string) {
+	c.GrpcServerAddress = address
+	c.platformGrpcAddress = ""
+	c.platformGrpcUseTLS = nil
 }
 
 // Configuration option functions
@@ -120,9 +159,13 @@ func WithCommunicationMode(mode string) Option {
 	return func(c *Config) { c.CommunicationMode = "grpc" }
 }
 
-// WithGrpcServerAddress sets the gRPC server address
+// WithGrpcServerAddress sets the gRPC server address. It wins over
+// GRPC_SERVER_ADDRESS and the platform's DIBBLA_GRPC_SERVER_ADDRESS, and the
+// platform's TLS hint then no longer applies. A worker deployed on the Dibbla
+// platform needs neither: set this only to reach a different server on
+// purpose (local development: "localhost:50051").
 func WithGrpcServerAddress(address string) Option {
-	return func(c *Config) { c.GrpcServerAddress = address }
+	return func(c *Config) { c.chooseGrpcServerAddress(address) }
 }
 
 // WithServerApiToken sets the API token for authentication
@@ -146,7 +189,8 @@ func WithOrgID(orgID string) Option {
 	return func(c *Config) { c.OrgID = orgID }
 }
 
-// WithGrpcTLS enables or disables TLS for gRPC connections
+// WithGrpcTLS enables or disables TLS for gRPC connections. It wins over
+// GRPC_USE_TLS and the platform's DIBBLA_GRPC_USE_TLS.
 func WithGrpcTLS(useTLS bool) Option {
 	return func(c *Config) { c.GrpcUseTLS = &useTLS }
 }
@@ -167,7 +211,7 @@ func WithGrpcInsecureSkipVerify(skip bool) Option {
 func WithGrpcMode(serverAddress string) Option {
 	return func(c *Config) {
 		c.CommunicationMode = "grpc"
-		c.GrpcServerAddress = serverAddress
+		c.chooseGrpcServerAddress(serverAddress)
 	}
 }
 
@@ -230,4 +274,3 @@ func getEnvIntWithDefault(key string, defaultValue int) int {
 	}
 	return defaultValue
 }
-

@@ -47,8 +47,9 @@ type GreetingOutput struct {
 }
 
 func main() {
-    // Create server with minimal configuration
-    // (defaults to grpc.dibbla.com:443 with TLS enabled)
+    // Create server with minimal configuration (on the Dibbla platform it
+    // connects to the install it is deployed on; elsewhere it defaults to
+    // grpc.dibbla.com:443 with TLS enabled)
     server, err := sdk.New(
         sdk.WithServerName("my-custom-worker"),
         sdk.WithServerApiToken("your-api-token"),
@@ -83,11 +84,33 @@ func main() {
 | Variable              | Default              | Description                                    |
 | --------------------- | -------------------- | ---------------------------------------------- |
 | `SERVER_NAME`         | `codex-go-worker`    | Unique identifier for this worker              |
-| `GRPC_SERVER_ADDRESS` | `grpc.dibbla.com:443` | Address of the workflow server (the proxy gRPC endpoint) |
+| `GRPC_SERVER_ADDRESS` | _(the platform's, else `grpc.dibbla.com:443`)_ | Address of the workflow server (the proxy gRPC endpoint). Not needed on the Dibbla platform — set it only to reach a different server on purpose (local development: `localhost:50051`) |
 | `SERVER_API_TOKEN`    | _(empty)_            | Your Dibbla API token (`ak_…`, created in the console) — only needed for local development |
 | `DIBBLA_IDENTITY_TOKEN_FILE` | _(platform-set)_ | Path to the workload-identity token; the Dibbla platform injects this automatically |
 | `SERVER_ORG_ID`       | _(empty)_            | Optional: pin registration to a specific org (multi-org token owners) |
 | `GRPC_USE_TLS`        | _(auto-detect)_      | Enable/disable TLS (`true`, `false`, or empty) |
+| `DIBBLA_GRPC_SERVER_ADDRESS` | _(platform-set)_ | The gRPC address of the install the worker is deployed on. Set by the Dibbla platform; you don't set this. Used when `GRPC_SERVER_ADDRESS` is unset |
+| `DIBBLA_GRPC_USE_TLS` | _(platform-set)_ | Whether that address uses TLS (`true`/`false`). Set by the Dibbla platform; you don't set this. Applies only to `DIBBLA_GRPC_SERVER_ADDRESS` |
+
+#### Which server the worker connects to
+
+**Deployed on the Dibbla platform: no address needed.** The platform tells
+every deployment where its own workflow server is
+(`DIBBLA_GRPC_SERVER_ADDRESS`, `DIBBLA_GRPC_USE_TLS`), so a worker deployed on
+a self-hosted Dibbla install connects to that install — not to
+`grpc.dibbla.com` — with zero configuration. Leave `GRPC_SERVER_ADDRESS`
+unset there: it wins over the platform's address, so setting it points the
+worker somewhere else.
+
+**Set `GRPC_SERVER_ADDRESS` only to reach a different server on purpose** —
+for local development, `localhost:50051`.
+
+The SDK uses the first of these that is set (blank counts as unset):
+
+1. `sdk.WithGrpcServerAddress(...)` in code
+2. `GRPC_SERVER_ADDRESS`
+3. `DIBBLA_GRPC_SERVER_ADDRESS` (set by the platform)
+4. `grpc.dibbla.com:443`
 
 #### Authentication & org scoping
 
@@ -114,6 +137,16 @@ The SDK defaults to `grpc.dibbla.com:443` with TLS enabled. It automatically det
 
 - **Production addresses** (default: `grpc.dibbla.com:443`): TLS enabled with system certificates
 - **Localhost addresses** (`localhost:`, `127.0.0.1:`, `[::1]:`): No TLS (for local development)
+
+The first of these decides:
+
+1. `sdk.WithGrpcTLS(...)` in code
+2. `GRPC_USE_TLS`
+3. `DIBBLA_GRPC_USE_TLS` (set by the platform) — only while the address is
+   the platform's `DIBBLA_GRPC_SERVER_ADDRESS`. It describes that address, so
+   it never applies to one you chose with `GRPC_SERVER_ADDRESS` or
+   `WithGrpcServerAddress`
+4. auto-detection, as above
 
 #### Explicit TLS Control
 
@@ -731,6 +764,7 @@ github.com/dibbla-agents/sdk-go
 
 **Connection Failures**: 
 - By default, the SDK connects to `grpc.dibbla.com:443` with TLS enabled
+- Deployed on the Dibbla platform, it connects to the install it is deployed on (`DIBBLA_GRPC_SERVER_ADDRESS`) — unless the deployment sets `GRPC_SERVER_ADDRESS`, which wins
 - For local development, set `GRPC_SERVER_ADDRESS=localhost:50051`
 - Verify your server address points to a running workflow server
 - Check TLS configuration matches your server setup
