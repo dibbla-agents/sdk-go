@@ -140,11 +140,20 @@ func setupGrpcMode(gs *GlobalState, config CommunicationConfig) (communication.W
 
 // NewGlobalStateFromEnvironment creates a GlobalState using environment variables
 func NewGlobalStateFromEnvironment() (*GlobalState, error) {
-	config := CommunicationConfig{
+	return NewGlobalStateWithMode(communicationConfigFromEnvironment())
+}
+
+// communicationConfigFromEnvironment resolves the server exactly as sdk.New
+// does: GRPC_SERVER_ADDRESS, else the platform's DIBBLA_GRPC_SERVER_ADDRESS,
+// else grpc.dibbla.com:443; TLS from GRPC_USE_TLS, else the platform's hint
+// for its own address, else auto-detect.
+func communicationConfigFromEnvironment() CommunicationConfig {
+	endpoint := communication.EndpointFromEnv()
+	return CommunicationConfig{
 		ServerName:        getEnvWithDefault("SERVER_NAME", "go-toolserver"),
-		GrpcServerAddress: getEnvWithDefault("GRPC_SERVER_ADDRESS", "grpc.dibbla.com:443"),
+		GrpcServerAddress: endpoint.Address,
+		UseTLS:            endpoint.TLS(),
 	}
-	return NewGlobalStateWithMode(config)
 }
 
 // getEnvWithDefault returns environment variable value or default if not set

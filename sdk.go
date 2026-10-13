@@ -85,10 +85,9 @@ func (s *Server) initializeEnvironment() error {
 	return nil
 }
 
-// initializeGlobalState creates and initializes the global state
-func (s *Server) initializeGlobalState() error {
-	// Create communication config from SDK config
-	commConfig := state.CommunicationConfig{
+// communicationConfig is the connection the SDK config describes.
+func (s *Server) communicationConfig() state.CommunicationConfig {
+	return state.CommunicationConfig{
 		ServerName:             s.config.ServerName,
 		GrpcServerAddress:      s.config.GrpcServerAddress,
 		ServerApiToken:         s.config.ServerApiToken,
@@ -98,13 +97,16 @@ func (s *Server) initializeGlobalState() error {
 		ReconnectIntervalSec:   s.config.GrpcReconnectIntervalSec,
 		HealthcheckIntervalSec: s.config.GrpcHealthcheckIntervalSec,
 		PingIntervalSec:        s.config.PingIntervalSec,
-		UseTLS:                 s.config.GrpcUseTLS,
+		UseTLS:                 s.config.grpcUseTLS(),
 		TLSInsecureSkipVerify:  s.config.GrpcTLSInsecureSkipVerify,
 		KeepaliveTimeSec:       s.config.GrpcKeepaliveTimeSec,
 		KeepaliveTimeoutSec:    s.config.GrpcKeepaliveTimeoutSec,
 	}
+}
 
-	globalState, err := state.NewGlobalStateWithMode(commConfig)
+// initializeGlobalState creates and initializes the global state
+func (s *Server) initializeGlobalState() error {
+	globalState, err := state.NewGlobalStateWithMode(s.communicationConfig())
 	if err != nil {
 		return fmt.Errorf("failed to create global state: %w", err)
 	}
